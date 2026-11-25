@@ -116,11 +116,11 @@ function mealGroupsHtml(meals, editable) {
   return html || '<div class="empty">기록된 식사가 없어요</div>';
 }
 function isFavorite(name) { return favorites.some((f) => f.name === name); }
-function mealRowView(m) {
+function mealRowView(m, x) {
   const g = m.grams ? `<span class="g">${m.grams}g</span>` : '';
   const favdata = encodeURIComponent(JSON.stringify({ name: m.name, grams: m.grams ?? null, kcal: m.kcal ?? null }));
   const on = isFavorite(m.name);
-  return `<div class="li"><div class="li-left"><button type="button" class="favmini${on ? ' on' : ''}" title="즐겨찾기에 저장" data-favitem="${favdata}">${on ? '★' : '☆'}</button><div class="li-name">${esc(m.name)}${g}</div></div><b class="kcal">${m.kcal ?? '–'} kcal</b></div>`;
+  return `<div class="li"><div class="li-left"><button type="button" class="favmini${on ? ' on' : ''}" title="즐겨찾기에 저장" data-favitem="${favdata}">${on ? '★' : '☆'}</button><div class="li-name">${esc(m.name)}${g}</div></div><b class="kcal">${m.kcal ?? '–'} kcal</b>${x ? `<button class="more" data-xmeal="${x}" aria-label="수정·삭제">⋯</button>` : ''}</div>`;
 }
 async function favMiniClick(btn) {
   try {
@@ -137,10 +137,10 @@ function exDetail(e) {
   if (e.duration) p.push(`${e.duration}분`);
   return p.join(' · ');
 }
-function exRowView(e) {
+function exRowView(e, x) {
   const cat = e.category ? `<span class="tag t-${EX_CATS.indexOf(e.category)}">${esc(e.category)}</span>` : '';
   const kcalTxt = e.kcal != null ? `<span class="g">${e.kcal}kcal</span>` : '';
-  return `<div class="li exinfo" data-exinfo="${esc(e.name)}"><div class="li-left"><div>${cat}<span class="li-name">${esc(e.name)}</span><span class="info-i">ⓘ</span>${e.notes ? `<small>${esc(e.notes)}</small>` : ''}</div></div><div class="li-right"><b>${exDetail(e) || '–'}</b>${kcalTxt}</div></div>`;
+  return `<div class="li exinfo" data-exinfo="${esc(e.name)}"><div class="li-left"><div>${cat}<span class="li-name">${esc(e.name)}</span><span class="info-i">ⓘ</span>${e.notes ? `<small>${esc(e.notes)}</small>` : ''}</div></div><div class="li-right"><b>${exDetail(e) || '–'}</b>${kcalTxt}</div>${x ? `<button class="more" data-xex="${x}" aria-label="수정·삭제">⋯</button>` : ''}</div>`;
 }
 
 /* ---------------- program: safe auto-plan ---------------- */
@@ -342,7 +342,7 @@ function openStatusSheet(kind, i) {
     </div>
     <div class="err" id="err"></div>
     <button class="btn" id="stSave">저장</button>
-    ${st ? '<button class="btn ghost" id="stClear">체크 해제</button>' : ''}`);
+    ${st ? '<button class="btn ghost" id="stClear">이 기록 지우기</button>' : ''}`);
   let pick = st || 'done';
   sheet.querySelectorAll('[data-st]').forEach((b) => { b.onclick = () => {
     pick = b.dataset.st;
@@ -569,22 +569,24 @@ function viewMeals() {
   const groups = MEAL_TYPES.map((type) => {
     const rows = dayPlan.meals.map((m, i) => [m, i]).filter(([m]) => m.type === type);
     const allSkip = rows.length && rows.every(([m]) => itemStatus(m) === 'skip');
-    return rows.length ? `<div class="mg-label">${type}<button type="button" class="skipall" data-skipmeal="${type}">${allSkip ? '안 먹음 취소' : '통으로 안 먹었어요'}</button></div>${rows.map(([m, i]) => checkRow('meals', i, m)).join('')}` : '';
+    return rows.length ? `<div class="mg-label">${type}<button type="button" class="skipall" data-skipmeal="${type}">${allSkip ? '안 먹음 취소' : '안 먹었어요'}</button></div>${rows.map(([m, i]) => checkRow('meals', i, m)).join('')}` : '';
   }).join('');
   const extra = (r.meals || []).filter((m) => !m.plan);
   const exExtra = (r.exercises || []).filter((x) => !x.plan);
-  const exExtraHtml = exExtra.length ? `<div class="mg-label">계획 외로 한 운동</div>${exExtra.map(exRowView).join('')}` : '';
+  const xMeals = (r.meals || []).map((m, i) => [m, i]).filter(([m]) => !m.plan).map(([m, i]) => mealRowView(m, `${mealDate}:${i}`)).join('');
+  const xEx = (r.exercises || []).map((e, i) => [e, i]).filter(([e]) => !e.plan).map(([e, i]) => exRowView(e, `${mealDate}:${i}`)).join('');
+  const exExtraHtml = exExtra.length ? `<div class="mg-label">계획 외로 한 운동</div>${xEx}` : '';
   const bar = weekBar(mealDate, 'data-mealdate', 'openMealCal', (d) => d === mealDate ? dayPlan.meals.length > 0 : !!(cache[d]?.meals || []).length);
   if (!dayPlan.meals.length && !dayPlan.exercises.length) return `${bar}
     <div class="card"><div class="card-title">${dateLabel(mealDate)} 계획이 없어요</div><p class="desc">추천 플랜을 받으면 이 날 먹을 식단과 운동이 채워져요.</p>
     <button class="btn" id="genDay">추천 플랜 받기</button></div>
-    ${extra.length ? `<div class="card"><div class="card-title">기록한 음식</div>${mealGroupsHtml(extra)}</div>` : ''}
-    ${exExtra.length ? `<div class="card"><div class="card-title">기록한 운동</div>${exExtra.map(exRowView).join('')}</div>` : ''}
+    ${extra.length ? `<div class="card"><div class="card-title">기록한 음식</div>${xMeals}</div>` : ''}
+    ${exExtra.length ? `<div class="card"><div class="card-title">기록한 운동</div>${xEx}</div>` : ''}
     <div class="card"><button class="link-btn" style="padding:0" data-fooddate="${mealDate}">+ 음식 기록하기</button><button class="link-btn" style="padding:14px 0 0;display:block" data-exdate="${mealDate}">+ 운동 기록하기</button></div>`;
   return `${bar}
   <div class="card"><div class="card-title">${dateLabel(mealDate)} 식단<span class="sub">${ate.toLocaleString()} / ${planned.toLocaleString()} kcal</span></div>
     <p class="desc small">동그라미: 계획대로 먹음 · ⋯: 다른 걸 먹었거나 안 먹었을 때</p>${groups}
-    ${extra.length ? `<div class="mg-label">계획 외로 먹은 음식</div>${extra.map(mealRowView).join('')}` : ''}
+    ${extra.length ? `<div class="mg-label">계획 외로 먹은 음식</div>${xMeals}` : ''}
     <button class="link-btn" data-fooddate="${mealDate}">+ 계획에 없던 음식 기록하기</button></div>
   <div class="card"><div class="card-title">운동<span class="sub">${['일', '월', '화', '수', '목', '금', '토'][new Date(mealDate + 'T00:00:00').getDay()]}요일 루틴</span></div>
     <p class="desc small">동그라미: 계획대로 함 · ⋯: 다른 운동을 했거나 못 했을 때</p>
@@ -661,9 +663,8 @@ function viewSettings() {
     ${store?.mode === 'supabase' ? `<div class="eyebrow">내 기록 공유하기</div>
     <button type="button" class="in daterow" id="shareBtn" style="margin:6px 0 16px">${shareToken ? '공유 중 · 링크 보기' : '읽기 전용 링크 만들기'}<span class="chev">›</span></button>
     <div class="eyebrow">계정 관리</div>
-    <button class="btn ghost" id="chPw">비밀번호 변경</button><button class="btn ghost" id="doLogout">로그아웃</button>
-    <button class="btn ghost" id="delAcct" style="color:var(--up)">회원 탈퇴</button>` : ''}
-  </div>`;
+    <button class="btn ghost" id="chPw">비밀번호 변경</button><button class="btn ghost" id="doLogout">로그아웃</button>` : ''}
+  </div>${store?.mode === 'supabase' ? '<div class="foot-link"><button type="button" id="delAcct">회원 탈퇴</button></div>' : ''}`;
 }
 async function setStartDate(d) {
   START = d;
@@ -1582,6 +1583,8 @@ function openExerciseGuide(name) {
     <a class="btn ghost yt-link" href="${search}" target="_blank" rel="noopener">${g?.yt ? '▶ YouTube에서 열기 / 다른 영상 찾기' : '▶ YouTube에서 영상 찾아보기'}</a>`);
 }
 document.addEventListener('click', async (e) => {
+  const xm = e.target.closest('[data-xmeal]'); if (xm) return openExtraMealSheet(xm.dataset.xmeal);
+  const xe = e.target.closest('[data-xex]'); if (xe) return openExtraExSheet(xe.dataset.xex);
   if (e.target.closest('#chPw')) return openPasswordSheet();
   if (e.target.closest('#delAcct')) return openDeleteSheet();
   if (e.target.closest('#shareBtn')) return openShareSheet();
@@ -1590,6 +1593,31 @@ document.addEventListener('click', async (e) => {
   if (yb) { yb.outerHTML = `<div class="yt"><iframe src="https://www.youtube-nocookie.com/embed/${yb.dataset.yt}?playsinline=1&autoplay=1&rel=0&modestbranding=1" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`; return; }
   const t = e.target.closest('[data-exinfo]'); if (t) openExerciseGuide(t.dataset.exinfo);
 });
+
+function openExtraMealSheet(x) {
+  const [date, i] = [x.slice(0, 10), Number(x.slice(11))], r = cache[date] || {}, m = (r.meals || [])[i]; if (!m) return;
+  openSheet(`<div class="sheet-head"><h2>${dateLabel(date)} 음식 수정</h2></div><div id="rows">${mealRowEdit(m, { star: false })}</div>
+    <div class="err" id="err"></div><button class="btn" id="save">저장</button><button class="btn ghost" id="del" style="color:var(--up)">삭제</button>`);
+  sheet.querySelectorAll('.rm').forEach((b) => b.remove());
+  const put = async (meals) => {
+    const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: meals.reduce((a, v) => a + (v.kcal || 0), 0) || null, calories_burned: r.calories_burned ?? null, meals, exercises: r.exercises || [] };
+    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = authMsg(e); }
+  };
+  $('#save').onclick = () => { const n = readMealRows($('#rows'))[0]; if (!n) { $('#err').textContent = '음식 이름을 입력해주세요.'; return; } const meals = [...r.meals]; meals[i] = n; put(meals); };
+  $('#del').onclick = () => { if (confirm('이 음식 기록을 삭제할까요?')) put(r.meals.filter((_, k) => k !== i)); };
+}
+function openExtraExSheet(x) {
+  const [date, i] = [x.slice(0, 10), Number(x.slice(11))], r = cache[date] || {}, e = (r.exercises || [])[i]; if (!e) return;
+  openSheet(`<div class="sheet-head"><h2>${dateLabel(date)} 운동 수정</h2></div><div id="rows">${exRowEdit(e)}</div>
+    <div class="err" id="err"></div><button class="btn" id="save">저장</button><button class="btn ghost" id="del" style="color:var(--up)">삭제</button>`);
+  sheet.querySelectorAll('.rm').forEach((b) => b.remove());
+  const put = async (exercises) => {
+    const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: r.calories_burned ?? null, meals: r.meals || [], exercises };
+    try { await store.save(rec); closeSheet(); await refresh(); } catch (er) { $('#err').textContent = authMsg(er); }
+  };
+  $('#save').onclick = () => { const n = readExRows($('#rows'))[0]; if (!n) { $('#err').textContent = '운동 이름을 입력해주세요.'; return; } const { done, ...v } = n; const list = [...r.exercises]; list[i] = v; put(list); };
+  $('#del').onclick = () => { if (confirm('이 운동 기록을 삭제할까요?')) put(r.exercises.filter((_, k) => k !== i)); };
+}
 
 function shareBase() {
   if (CFG.SHARE_BASE) return CFG.SHARE_BASE;
