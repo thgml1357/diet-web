@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 체크 탭에서 걸음·소모 입력';
+const APP_VERSION = '2026-11-25 · 키보드 입력 시 바텀시트 확장';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -797,26 +797,38 @@ function viewPlan() {
 /* ---------------- sheet (view / editor) ---------------- */
 const sheet = $('#sheet'), bg = $('#sheetBg');
 // iOS keyboard: keep the sheet inside the visible viewport and stop the page behind it from scrolling
-let lockedY = 0;
+let lockedY = 0, sheetTyping = false, baseH = window.innerHeight;
+const isField = (t) => t && /^(INPUT|SELECT|TEXTAREA)$/.test(t.tagName);
+// While typing (keyboard up) the sheet grows to fill all the visible space above the keyboard; otherwise it sizes to its content.
 function syncSheetViewport() {
   const v = window.visualViewport; if (!v || sheet.hidden) return;
   const kb = Math.max(0, Math.round(window.innerHeight - v.height - v.offsetTop));
+  const shrunk = window.innerHeight < baseH - 80; // webview itself was resized by the keyboard
+  const full = sheetTyping && (kb > 0 || shrunk);
+  sheet.classList.toggle('full', full);
   sheet.style.bottom = kb + 'px';
-  sheet.style.maxHeight = Math.floor(v.height * 0.94) + 'px';
-  sheet.style.paddingBottom = kb > 0 ? '16px' : '';
+  if (full) { const h = Math.floor(v.height - 8) + 'px'; sheet.style.height = h; sheet.style.maxHeight = h; sheet.style.paddingBottom = '64px'; }
+  else { sheet.style.height = ''; sheet.style.maxHeight = Math.floor(v.height * 0.94) + 'px'; sheet.style.paddingBottom = kb > 0 ? '16px' : ''; }
 }
 if (window.visualViewport) { visualViewport.addEventListener('resize', syncSheetViewport); visualViewport.addEventListener('scroll', syncSheetViewport); }
-sheet.addEventListener('focusin', (e) => { const t = e.target; if (/INPUT|SELECT|TEXTAREA/.test(t.tagName)) setTimeout(() => { syncSheetViewport(); t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 320); });
+window.addEventListener('resize', syncSheetViewport);
+sheet.addEventListener('focusin', (e) => {
+  const t = e.target; if (!isField(t)) return;
+  sheetTyping = true; syncSheetViewport();
+  setTimeout(() => { syncSheetViewport(); t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 320);
+});
+sheet.addEventListener('focusout', () => setTimeout(() => { if (!isField(document.activeElement) || !sheet.contains(document.activeElement)) { sheetTyping = false; syncSheetViewport(); } }, 120));
 function openSheet(html) {
   sheet.innerHTML = `<div class="sheet-handle"></div>${html}`;
   sheet.style.transform = '';
   if (sheet.hidden) { lockedY = window.scrollY; document.body.style.top = `-${lockedY}px`; document.body.classList.add('sheet-open'); }
   sheet.hidden = bg.hidden = false;
+  if (!sheetTyping) baseH = Math.max(baseH, window.innerHeight);
   syncSheetViewport();
 }
 function closeSheet() {
   if (!sheet.hidden) { try { document.activeElement?.blur(); } catch {} document.body.classList.remove('sheet-open'); document.body.style.top = ''; window.scrollTo(0, lockedY); }
-  sheet.hidden = bg.hidden = true; sheet.style.transform = ''; sheet.style.bottom = ''; sheet.style.maxHeight = ''; sheet.style.paddingBottom = '';
+  sheet.hidden = bg.hidden = true; sheetTyping = false; sheet.classList.remove('full'); sheet.style.transform = ''; sheet.style.bottom = ''; sheet.style.height = ''; sheet.style.maxHeight = ''; sheet.style.paddingBottom = '';
 }
 bg.onclick = closeSheet;
 sheet.addEventListener('click', (e) => { const fav = e.target.closest('.favmini'); if (fav) favMiniClick(fav); });
