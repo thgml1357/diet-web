@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 음식 이름 자동완성·대체 메뉴 제거';
+const APP_VERSION = '2026-11-25 · 기록 탭 아이콘·버튼 정리';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -128,12 +128,13 @@ function mealGroupsHtml(meals, editable) {
     <div class="mealgroup"><div class="mg-label">${t}</div>${g[t].map((m) => mealRowView(m)).join('')}</div>`).join('');
   return html || '<div class="empty">기록된 식사가 없어요</div>';
 }
+const PENCIL = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h4L19.5 8.5a2.1 2.1 0 0 0-3-3L5 17v3Z"/><path d="M14.5 7.5l3 3"/></svg>';
 function isFavorite(name) { return favorites.some((f) => f.name === name); }
 function mealRowView(m, x) {
   const g = m.grams ? `<span class="g">${m.grams}g</span>` : '';
   const favdata = encodeURIComponent(JSON.stringify({ name: m.name, grams: m.grams ?? null, kcal: m.kcal ?? null }));
   const on = isFavorite(m.name);
-  return `<div class="li"><div class="li-left"><button type="button" class="favmini${on ? ' on' : ''}" title="즐겨찾기에 저장" data-favitem="${favdata}">${on ? '★' : '☆'}</button><div class="li-name">${x && x !== 'plain' ? '<span class="tag t-x">추가</span>' : ''}${esc(m.name)}${g}</div></div><b class="kcal">${m.kcal ?? '–'} kcal</b>${x ? `<button class="more" data-xmeal="${x}" aria-label="수정·삭제">⋯</button>` : ''}</div>`;
+  return `<div class="li"><div class="li-left"><button type="button" class="favmini${on ? ' on' : ''}" title="즐겨찾기에 저장" data-favitem="${favdata}">${on ? '★' : '☆'}</button><div class="li-name">${x && x !== 'plain' ? '<span class="tag t-x">추가</span>' : ''}${esc(m.name)}${g}</div></div><b class="kcal">${m.kcal ?? '–'} kcal</b>${x ? `<button class="more" data-xmeal="${x}" aria-label="수정·삭제">${PENCIL}</button>` : ''}</div>`;
 }
 async function favMiniClick(btn) {
   try {
@@ -151,10 +152,16 @@ function exDetail(e) {
   if (e.weight) p.push(`${e.weight}kg`);
   return p.join(' · ');
 }
+function exDetailHtml(e) {
+  const l = [];
+  if (e.sets) { l.push(`${e.sets}세트`); const t = [e.reps ? `× ${e.reps}` : '', e.duration ? `${e.duration}분` : '', e.weight ? `${e.weight}kg` : ''].filter(Boolean).join(' · '); if (t) l.push(t); }
+  else { const t = [e.reps ? String(e.reps) : '', e.duration ? `${e.duration}분` : '', e.weight ? `${e.weight}kg` : ''].filter(Boolean).join(' · '); if (t) l.push(t); }
+  return l.map(esc).join('<br>');
+}
 function exRowView(e, x) {
   const cat = e.category ? `<span class="tag t-${EX_CATS.indexOf(e.category)}">${esc(e.category)}</span>` : '';
   const kcalTxt = e.kcal != null ? `<span class="g">${e.kcal}kcal</span>` : '';
-  return `<div class="li exinfo" data-exinfo="${esc(e.name)}"><div class="li-left"><div>${cat}<span class="li-name">${esc(e.name)}</span><span class="info-i">ⓘ</span>${e.notes ? `<small>${esc(e.notes)}</small>` : ''}</div></div><div class="li-right"><b>${exDetail(e) || '–'}</b>${kcalTxt}</div>${x ? `<button class="more" data-xex="${x}" aria-label="수정·삭제">⋯</button>` : ''}</div>`;
+  return `<div class="li exinfo" data-exinfo="${esc(e.name)}"><div class="li-left"><div>${cat}<span class="li-name">${esc(e.name)}</span><span class="info-i">ⓘ</span>${e.notes ? `<small>${esc(e.notes)}</small>` : ''}</div></div><div class="li-right"><b>${exDetailHtml(e) || '–'}</b>${kcalTxt}</div>${x ? `<button class="more" data-xex="${x}" aria-label="수정·삭제">${PENCIL}</button>` : ''}</div>`;
 }
 
 /* ---------------- program: safe auto-plan ---------------- */
@@ -393,7 +400,7 @@ function togglePlanItem(kind, i) {
 function checkRow(kind, i, item) {
   const st = itemStatus(item), a = item.actual || {};
   const kc = st === 'swap' ? a.kcal : st === 'skip' ? 0 : item.kcal;
-  const detail = st === 'swap' ? exDetail(a) : exDetail(item);
+  const detail = st === 'swap' ? exDetailHtml(a) : exDetailHtml(item);
   const right = kind === 'meals'
     ? `<b class="kcal">${kc ?? '–'} kcal</b>`
     : `<div class="li-right"><b>${detail || '–'}</b>${kc != null ? `<span class="g">${kc}kcal</span>` : ''}</div>`;
@@ -405,7 +412,7 @@ function checkRow(kind, i, item) {
     : plain ? `<small>${plain}</small>` : '';
   return `<div class="check-row"><button class="check st-${st || 'none'}" data-check="${kind}:${i}"><span class="box"></span>
     <span class="check-body"><span class="check-name">${cat}${esc(item.name)}</span>${sub}</span>${right}</button>
-    <button class="more" data-more="${kind}:${i}" aria-label="양·내용 수정">${kind === 'meals' ? '양·변경' : '변경'}</button></div>`;
+    <button class="more" data-more="${kind}:${i}" aria-label="${kind === 'meals' ? '양·내용 변경' : '변경'}">${PENCIL}</button></div>`;
 }
 function openStatusSheet(kind, i) {
   const item = dayPlan[kind][i], st = itemStatus(item), isMeal = kind === 'meals', a = item.actual || {};
@@ -442,8 +449,7 @@ function openStatusSheet(kind, i) {
       <label class="unit-in"><input id="lfW" type="number" step="0.5" inputmode="decimal" value="${(st === 'swap' ? a.weight : item.weight) ?? ''}" placeholder="맨몸이면 비워 두세요"><span>kg</span></label>
       <div style="margin-top:8px">${feelHtml((st === 'swap' ? a.feel : item.feel) || 'ok')}</div></div>`}
     <div class="err" id="err"></div>
-    <button class="btn" id="stSave">저장</button>
-    ${st ? '<button class="btn ghost" id="stClear">이 기록 지우기</button>' : ''}`);
+    <div class="act-row">${st ? '<button type="button" class="del-link" id="stClear">삭제</button>' : ''}<button class="btn" id="stSave">저장</button></div>`);
   if (!isMeal) wireFeel();
   let pick = st === 'swap' && a.portion ? 'portion' : st || 'done';
   if (isMeal) {
@@ -768,7 +774,7 @@ function openInbodySheet(date) {
       <label class="unit-in"><input id="ib-${k}" type="number" step="any" inputmode="decimal" value="${val(k)}" placeholder="0"><span>${unit}</span></label></div>`).join('')}</div>
     <label class="f">자동 계산</label><div id="ibAuto"></div>
     ${HEIGHT ? '' : '<p class="desc small">BMI는 설정에서 키를 입력하면 계산돼요.</p>'}
-    <div class="err" id="err"></div><button class="btn" id="ibSave">저장</button>${r.inbody ? '<button class="btn danger" id="ibDel">인바디 기록 삭제</button>' : ''}`);
+    <div class="err" id="err"></div><div class="act-row">${r.inbody ? '<button type="button" class="del-link" id="ibDel">삭제</button>' : ''}<button class="btn" id="ibSave">저장</button></div>`);
   const read = () => Object.fromEntries(IB_FIELDS.filter((f) => f[4]).map(([k]) => [k, num($(`#ib-${k}`).value)]));
   const auto = () => { const c = ibCalc(read()); $('#ibAuto').innerHTML = `<div class="ib-grid">${IB_FIELDS.filter((f) => !f[4]).map(([k, label, unit, d]) => `<div class="ib-cell"><small>${label}</small><b>${ibFmt(c[k], d)}<span class="u">${unit}</span></b></div>`).join('')}</div>`; };
   sheet.querySelectorAll('input').forEach((x) => { x.oninput = auto; }); auto();
@@ -875,7 +881,7 @@ function viewMeals() {
     if (!rows.length) return '';
     const allSkip = rows.every(([m]) => itemStatus(m) === 'skip');
     const key = `${mealDate}|${type}`, mine = exIdx.filter(([m]) => m.type === type);
-    const head = `<div class="mg-label mg-flex">${type}<span class="mg-btns"><button type="button" class="skipall" data-swapmeal="${type}">다른 걸 먹었어요</button><button type="button" class="skipall${allSkip ? ' undo' : ''}" data-skipmeal="${type}">${allSkip ? '안 먹음 취소' : '안 먹었어요'}</button></span></div>`;
+    const head = `<div class="mg-label mg-flex">${type}<span class="mg-btns">${allSkip ? '' : `<button type="button" class="skipall" data-swapmeal="${type}">다른 걸 먹었어요</button>`}<button type="button" class="skipall${allSkip ? ' undo' : ''}" data-skipmeal="${type}">${allSkip ? '안 먹음 취소' : '안 먹었어요'}</button></span></div>`;
     // when the whole meal was skipped, fold the planned items into one line (less scrolling)
     const body = allSkip && !openMeals.has(key)
       ? `<button type="button" class="mg-collapsed" data-expand="${key}">계획 ${rows.length}개 · 안 먹음<span>펼치기 ▾</span></button>`
@@ -898,11 +904,11 @@ function viewMeals() {
     <div class="card">${activityRow(mealDate)}<button class="link-btn" style="padding:0" data-fooddate="${mealDate}">+ 음식 기록하기</button><button class="link-btn" style="padding:14px 0 0;display:block" data-exdate="${mealDate}">+ 운동 기록하기</button></div>`;
   return `${bar}
   <div class="card"><div class="card-title">${dateLabel(mealDate)} 식단<span class="sub">${ate.toLocaleString()} / ${planned.toLocaleString()} kcal</span></div>
-    <p class="desc small">동그라미: 계획대로 먹음 · 양·변경: 양이 달랐거나 다른 걸 먹었거나 안 먹었을 때</p>${groups}
+    <p class="desc small">동그라미: 계획대로 먹음 · ✎: 양이 달랐거나 다른 걸 먹었거나 안 먹었을 때</p>${groups}
     ${xMealsBottom}
     <button class="link-btn" data-fooddate="${mealDate}">+ 계획에 없던 음식 기록하기</button></div>
   <div class="card"><div class="card-title">운동<span class="sub">${['일', '월', '화', '수', '목', '금', '토'][new Date(mealDate + 'T00:00:00').getDay()]}요일 루틴</span></div>
-    <p class="desc small">동그라미: 계획대로 함 · 변경: 다른 운동을 했거나 못 했을 때</p>
+    <p class="desc small">동그라미: 계획대로 함 · ✎: 다른 운동을 했거나 못 했을 때</p>
     ${activityRow(mealDate)}
     ${dayPlan.exercises.map((e, i) => checkRow('exercises', i, e)).join('') || '<div class="empty">쉬는 날이에요</div>'}
     ${exExtraHtml}
@@ -1693,7 +1699,7 @@ function renderEdit(date) {
   <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
   <label class="f">운동</label><div id="exs">${(r.exercises || []).map((e) => exRowEdit(e, { collapsed: true })).join('')}</div><button class="add" id="addEx">+ 운동 추가</button>
   <div class="err" id="err"></div>
-  <button class="btn" id="save">저장</button>${cache[date] ? '<button class="btn danger" id="del">기록 삭제</button>' : ''}`);
+  <div class="act-row">${cache[date] ? '<button type="button" class="del-link" id="del">삭제</button>' : ''}<button class="btn" id="save">저장</button></div>`);
   $('#addMeal').onclick = wireMealRows($('#meals'));
   wireFavPanel($('#favToggle'), $('#favPanel'), $('#meals'));
   $('#addEx').onclick = () => $('#exs').insertAdjacentHTML('beforeend', exRowEdit({ category: '유산소' }));
@@ -2255,7 +2261,7 @@ document.addEventListener('click', async (e) => {
 function openExtraMealSheet(x) {
   const [date, i] = [x.slice(0, 10), Number(x.slice(11))], r = cache[date] || {}, m = (r.meals || [])[i]; if (!m) return;
   openSheet(`<div class="sheet-head"><h2>${dateLabel(date)} 음식 수정</h2></div><div id="rows">${mealRowEdit(m, { star: false })}</div>
-    <div class="err" id="err"></div><button class="btn" id="save">저장</button><button class="btn ghost" id="del" style="color:var(--up)">삭제</button>`);
+    <div class="err" id="err"></div><div class="act-row"><button type="button" class="del-link" id="del">삭제</button><button class="btn" id="save">저장</button></div>`);
   sheet.querySelectorAll('.rm').forEach((b) => b.remove());
   const put = async (meals) => {
     const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: Math.round(meals.reduce((a, v) => a + (v.kcal || 0), 0)) || null, calories_burned: r.calories_burned ?? null, meals, exercises: r.exercises || [] };
@@ -2267,7 +2273,7 @@ function openExtraMealSheet(x) {
 function openExtraExSheet(x) {
   const [date, i] = [x.slice(0, 10), Number(x.slice(11))], r = cache[date] || {}, e = (r.exercises || [])[i]; if (!e) return;
   openSheet(`<div class="sheet-head"><h2>${dateLabel(date)} 운동 수정</h2></div><div id="rows">${exRowEdit(e)}</div>
-    <div class="err" id="err"></div><button class="btn" id="save">저장</button><button class="btn ghost" id="del" style="color:var(--up)">삭제</button>`);
+    <div class="err" id="err"></div><div class="act-row"><button type="button" class="del-link" id="del">삭제</button><button class="btn" id="save">저장</button></div>`);
   sheet.querySelectorAll('.rm, .drag, .exfold').forEach((b) => b.remove());
   const put = async (exercises) => {
     const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: calcBurn({ ...r, exercises }) ?? r.calories_burned ?? null, meals: r.meals || [], exercises };
@@ -2355,7 +2361,7 @@ const TOUR = [
   { sheet: true, title: '체중 입력창', text: '체중을 적고 저장하면 오늘 기록에 들어가요. 체중이 쌓이면 감량 속도를 분석해서 식단과 운동을 자동으로 맞춰드려요. (지금은 저장하지 않아도 돼요)' },
   { tab: 'home', sel: TOUR_TAB('meals'), tap: true, title: '기록 탭', text: '오늘 먹을 식단과 할 운동을 체크하고 기록하는 곳이에요. 눌러보세요!' },
   { tab: 'meals', sel: '.check-row .box', title: '체크하기', text: '계획대로 먹거나 운동했다면 동그라미를 눌러 체크해요. 기록에 자동으로 반영돼요.' },
-  { tab: 'meals', sel: '.check-row .more', title: '다르게 했을 때', text: '오른쪽 「양·변경」 버튼: 양이 달랐거나 다른 걸 먹었거나 안 먹었을 때, 대신 한 운동이 있을 때 눌러요. 계획은 그대로 남아요.' },
+  { tab: 'meals', sel: '.check-row .more', title: '다르게 했을 때', text: '오른쪽 연필(✎) 버튼: 양이 달랐거나 다른 걸 먹었거나 안 먹었을 때, 대신 한 운동이 있을 때 눌러요. 계획은 그대로 남아요.' },
   { tab: 'meals', sel: '[data-fooddate]', tap: true, title: '계획에 없던 음식', text: '간식이나 외식처럼 계획에 없던 음식은 여기서 추가해요. 눌러볼까요?' },
   { sheet: true, title: '음식 추가창', text: '음식 이름을 검색하면 칼로리가 자동으로 채워져요. 0.5배·1.5배로 양도 조절하고, 자주 먹는 음식은 즐겨찾기에서 골라요. (지금은 저장하지 않아도 돼요)' },
   { tab: 'meals', sel: TOUR_TAB('record'), tap: true, title: '히스토리 탭', text: '날짜별 체중·식단·운동과 인바디를 모아보는 곳이에요. 눌러보세요!' },
