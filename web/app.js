@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 추천 플랜: 기록한 항목 보존';
+const APP_VERSION = '2026-11-25 · 소모 칼로리 자동 계산';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -300,7 +300,7 @@ async function syncRecordFromPlan(date, plan) {
   const meals = (r.meals || []).filter((m) => !m.plan).concat(plan.meals.map((m) => actualOf(m, 'meals')).filter(Boolean));
   const exercises = (r.exercises || []).filter((x) => !x.plan).concat(plan.exercises.map((x) => actualOf(x, 'exercises')).filter(Boolean));
   const sum = meals.reduce((a, m) => a + (m.kcal || 0), 0);
-  const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: sum || null, calories_burned: r.calories_burned ?? null, meals, exercises };
+  const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: sum || null, calories_burned: calcBurn({ ...r, exercises }) ?? r.calories_burned ?? null, meals, exercises };
   await store.save(rec);
   cache[date] = { ...r, ...rec };
 }
@@ -621,11 +621,25 @@ function viewRecord() {
 }
 
 // compact steps / watch-calories row for the 체크 tab (saved on change, no extra screens)
+// Burned kcal = steps + logged exercise. Steps are estimated at ~0.0005 kcal × body weight(kg) per step;
+// steps already covered by logged walking exercises (~100 steps/min) are not counted twice.
+const WALKISH = /걷기|산책|워킹|하이킹/;
+function calcBurn(r) {
+  const steps = Number(r.steps) || 0, ex = (r.exercises || []).reduce((a, e) => a + (Number(e.kcal) || 0), 0);
+  if (!steps && !ex) return null;
+  const w = Number(r.weight) || latestWeight() || 65;
+  const walkMin = (r.exercises || []).filter((e) => WALKISH.test(e.name || '')).reduce((a, e) => a + (Number(e.duration) || 0), 0);
+  return Math.round(Math.max(0, steps - walkMin * 100) * 0.0005 * w) + Math.round(ex);
+}
+function burnParts(r) {
+  const total = calcBurn(r) ?? 0, ex = Math.round((r.exercises || []).reduce((a, e) => a + (Number(e.kcal) || 0), 0));
+  return { total, ex, steps: total - ex };
+}
 function activityRow(date) {
   const r = cache[date] || {};
   if (READONLY) return `<div class="act-row"><span>걸음 <b>${r.steps != null ? Number(r.steps).toLocaleString() : '–'}</b></span><span>소모 <b>${r.calories_burned != null ? Number(r.calories_burned).toLocaleString() : '–'}</b> kcal</span></div>`;
   return `<div class="act-row" data-actdate="${date}"><label>걸음<input class="act-in" data-f="steps" type="number" inputmode="numeric" placeholder="0" value="${r.steps ?? ''}"></label>
-    <label>소모<input class="act-in" data-f="calories_burned" type="number" inputmode="numeric" placeholder="0" value="${r.calories_burned ?? ''}"><span>kcal</span></label><i class="act-ok" aria-live="polite"></i></div>`;
+    <label class="auto" title="걸음 + 운동으로 자동 계산">소모<b class="burn-val">${calcBurn(r) != null ? '≈ ' + calcBurn(r).toLocaleString() : '–'}</b><span>kcal 자동</span></label><i class="act-ok" aria-live="polite"></i></div>`;
 }
 function viewMeals() {
   const r = cache[mealDate] || {};
@@ -692,7 +706,7 @@ function openExerciseSheet(date) {
     const added = readExRows($('#rows')).map(({ done, ...x }) => x);
     if (!added.length) { $('#err').textContent = '운동 이름을 입력해주세요.'; return; }
     const r = cache[date] || {};
-    const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: r.calories_burned ?? null, meals: r.meals || [], exercises: [...(r.exercises || []), ...added] };
+    const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: calcBurn({ ...r, exercises: [...(r.exercises || []), ...added] }) ?? r.calories_burned ?? null, meals: r.meals || [], exercises: [...(r.exercises || []), ...added] };
     try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = authMsg(e); }
   };
 }
@@ -1518,8 +1532,8 @@ document.addEventListener('change', async (e) => {
   const inp = e.target.closest?.('.act-in'); if (!inp) return;
   const row = inp.closest('[data-actdate]'), date = row.dataset.actdate, r = cache[date] || {}, ok = row.querySelector('.act-ok');
   const val = (f) => num(row.querySelector(`[data-f="${f}"]`).value);
-  const rec = { date, weight: r.weight ?? null, steps: val('steps'), calories_consumed: r.calories_consumed ?? null, calories_burned: val('calories_burned'), meals: r.meals || [], exercises: r.exercises || [] };
-  try { await store.save(rec); cache[date] = { ...r, ...rec }; ok.textContent = '저장됨 ✓'; ok.className = 'act-ok on'; setTimeout(() => { ok.textContent = ''; }, 1500); }
+  const rec = { date, weight: r.weight ?? null, steps: val('steps'), calories_consumed: r.calories_consumed ?? null, calories_burned: calcBurn({ ...r, steps: val('steps') }), meals: r.meals || [], exercises: r.exercises || [] };
+  try { await store.save(rec); cache[date] = { ...r, ...rec }; const bv = row.querySelector('.burn-val'); if (bv) bv.textContent = rec.calories_burned != null ? '≈ ' + rec.calories_burned.toLocaleString() : '–'; ok.textContent = '저장됨 ✓'; ok.className = 'act-ok on'; setTimeout(() => { ok.textContent = ''; }, 1500); }
   catch (er) { ok.textContent = authMsg(er); ok.className = 'act-ok err'; }
 });
 document.querySelector('.tabs').addEventListener('click', async (e) => {
@@ -1802,7 +1816,7 @@ function openExtraExSheet(x) {
     <div class="err" id="err"></div><button class="btn" id="save">저장</button><button class="btn ghost" id="del" style="color:var(--up)">삭제</button>`);
   sheet.querySelectorAll('.rm').forEach((b) => b.remove());
   const put = async (exercises) => {
-    const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: r.calories_burned ?? null, meals: r.meals || [], exercises };
+    const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: calcBurn({ ...r, exercises }) ?? r.calories_burned ?? null, meals: r.meals || [], exercises };
     try { await store.save(rec); closeSheet(); await refresh(); } catch (er) { $('#err').textContent = authMsg(er); }
   };
   $('#save').onclick = () => { const n = readExRows($('#rows'))[0]; if (!n) { $('#err').textContent = '운동 이름을 입력해주세요.'; return; } const { done, ...v } = n; const list = [...r.exercises]; list[i] = v; put(list); };
