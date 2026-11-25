@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 스크롤바 숨김';
+const APP_VERSION = '2026-11-25 · 음식 g 표시 + 운동 검색 추가';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -425,7 +425,7 @@ function openStatusSheet(kind, i) {
           : `<label class="unit-in"><input id="aMin" type="number" inputmode="numeric" value="${a.duration ?? ''}" placeholder="0"><span>분</span></label>`}
         <label class="unit-in"><input id="aK" type="number" inputmode="numeric" value="${a.kcal ?? ''}" placeholder="${isMeal ? '0' : '자동'}"><span>kcal</span></label>
       </div>
-      ${isMeal ? `<label class="f">비슷한 칼로리 대체 메뉴</label><div class="favpanel" id="aAlt">${altFoods(item).map((f, i) => `<button type="button" class="favchip" data-i="${FOODS.indexOf(f) >= 0 ? FOODS.indexOf(f) : -1}" data-n="${esc(f.name)}">${esc(f.name)} · ${f.kcal}kcal</button>`).join('') || '<div class="empty" style="padding:6px 0">추천할 메뉴가 없어요</div>'}</div>
+      ${isMeal ? `<label class="f">비슷한 칼로리 대체 메뉴</label><div class="favpanel" id="aAlt">${altFoods(item).map((f, i) => `<button type="button" class="favchip" data-i="${FOODS.indexOf(f) >= 0 ? FOODS.indexOf(f) : -1}" data-n="${esc(f.name)}">${esc(f.name)} · ${f.grams ? f.grams + 'g · ' : ''}${f.kcal}kcal</button>`).join('') || '<div class="empty" style="padding:6px 0">추천할 메뉴가 없어요</div>'}</div>
         <label class="f">음식 검색</label>${foodSearchHtml()}
         <label class="f">즐겨찾기에서 고르기</label><div class="favpanel" id="aFav">${favChipsHtml()}</div>` : ''}
     </div>
@@ -736,19 +736,137 @@ function viewMeals() {
     <button class="link-btn" data-exdate="${mealDate}">+ 계획에 없던 운동 기록하기</button></div>`;
 }
 
-const EX_QUICK = [['걷기', '유산소'], ['러닝', '유산소'], ['자전거', '유산소'], ['수영', '유산소'], ['등산', '유산소'], ['요가', '스트레칭'], ['스트레칭', '스트레칭'], ['푸시업', '근력'], ['스쿼트', '근력'], ['플랭크', '근력']];
+// searchable exercise list for the 'add exercise' sheet: name|category|sets|reps|minutes
+const EX_DB = `
+걷기|유산소|||30
+빠르게 걷기|유산소|||30
+경사 걷기(트레드밀)|유산소|||30
+러닝|유산소|||20
+조깅|유산소|||30
+트레드밀 러닝|유산소|||20
+실내 사이클|유산소|||30
+자전거(야외)|유산소|||40
+스피닝|유산소|||45
+수영|유산소|||40
+아쿠아로빅|유산소|||40
+등산|유산소|||120
+하이킹|유산소|||90
+계단 오르기|유산소|||15
+스텝박스|유산소|||20
+줄넘기|유산소|||15
+에어로빅|유산소|||40
+줌바·댄스|유산소|||40
+로잉머신|유산소|||20
+일립티컬|유산소|||30
+HIIT|유산소|||20
+배드민턴|유산소|||60
+테니스|유산소|||60
+탁구|유산소|||40
+축구·풋살|유산소|||60
+농구|유산소|||40
+골프(라운딩)|유산소|||180
+볼링|유산소|||60
+푸시업|근력|3|10회|
+무릎 푸시업|근력|3|10회|
+와이드 푸시업|근력|3|8회|
+스쿼트|근력|3|12회|
+와이드 스쿼트|근력|3|12회|
+점프 스쿼트|근력|3|10회|
+월 싯|근력|3|30초|
+런지|근력|3|10회|
+리버스 런지|근력|3|10회|
+불가리안 스플릿 스쿼트|근력|3|8회|
+플랭크|근력|3|30초|
+사이드 플랭크|근력|3|20초|
+버드독|근력|3|10회|
+데드버그|근력|3|10회|
+글루트 브릿지|근력|3|15회|
+힙 쓰러스트|근력|3|12회|
+힙 힌지(맨몸)|근력|3|12회|
+마운틴 클라이머|근력|3|20회|
+버피|근력|3|10회|
+크런치|근력|3|15회|
+레그 레이즈|근력|3|12회|
+바이시클 크런치|근력|3|20회|
+슈퍼맨|근력|3|12회|
+카프 레이즈|근력|3|15회|
+딥스(의자 말고 평행봉)|근력|3|8회|
+풀업·턱걸이|근력|3|5회|
+레그 프레스 머신|근력|3|12회|
+레그 익스텐션|근력|3|12회|
+레그 컬|근력|3|12회|
+힙 어브덕션 머신|근력|3|15회|
+힙 어덕션 머신|근력|3|15회|
+체스트 프레스 머신|근력|3|12회|
+펙덱 플라이|근력|3|12회|
+랫 풀다운|근력|3|12회|
+시티드 로우|근력|3|12회|
+숄더 프레스 머신|근력|3|12회|
+케이블 로우|근력|3|12회|
+트라이셉스 푸시다운|근력|3|12회|
+바벨 스쿼트|근력|3|8회|
+데드리프트|근력|3|6회|
+루마니안 데드리프트|근력|3|10회|
+벤치프레스|근력|3|8회|
+오버헤드 프레스|근력|3|8회|
+덤벨 컬|근력|3|12회|
+덤벨 숄더 프레스|근력|3|10회|
+사이드 레터럴 레이즈|근력|3|15회|
+덤벨 로우|근력|3|10회|
+덤벨 런지|근력|3|10회|
+고블릿 스쿼트|근력|3|12회|
+케틀벨 스윙|근력|3|15회|
+밴드 로우|근력|3|15회|
+엎드려 Y-T 레이즈|근력|3|10회|
+요가|스트레칭|||40
+필라테스|스트레칭|||50
+전신 스트레칭|스트레칭|||10
+햄스트링 스트레칭|스트레칭|||5
+고관절 스트레칭|스트레칭|||10
+목·어깨 스트레칭|스트레칭|||5
+허리 스트레칭|스트레칭|||5
+폼롤러 마사지|스트레칭|||10
+고양이-소 자세|스트레칭|||5
+`.trim().split('\n').map((l) => { const [name, category, sets, reps, min] = l.split('|'); return { name, category, sets: sets ? +sets : null, reps: reps || null, duration: min ? +min : null }; });
+// recent / frequent exercises of this user (for the default chips)
+function recentExercises() {
+  const m = {};
+  recs().forEach((r) => (r.exercises || []).forEach((e) => { const n = e.planned || e.name; if (!n) return; const o = m[n] = m[n] || { n, c: 0, d: '', e }; o.c++; if (r.date >= o.d) { o.d = r.date; o.e = e; } }));
+  return Object.values(m).sort((a, b) => b.d.localeCompare(a.d) || b.c - a.c).slice(0, 8)
+    .map((o) => ({ name: o.n, category: o.e.category || '유산소', sets: o.e.sets ?? null, reps: o.e.reps ?? null, duration: o.e.duration ?? null, weight: o.e.weight }));
+}
+function exSearch(q) {
+  const k = foodNorm(q), db = EX_DB.filter((x) => foodNorm(x.name).includes(k)).slice(0, 10);
+  const seen = new Set(db.map((x) => x.name)), mine = recentExercises().filter((x) => foodNorm(x.name).includes(k) && !seen.has(x.name));
+  return [...mine, ...db].slice(0, 10);
+}
 // exercise-only entry: adds to the day's record without touching weight, food or the plan
 function openExerciseSheet(date) {
   openSheet(`<div class="sheet-head"><h2>${dateLabel(date)} 운동 추가</h2></div>
     <p class="desc small">계획에 없던 운동만 적어요. 칼로리를 비워두면 시간으로 자동 계산해요.</p>
-    <div class="favpanel" id="quick">${EX_QUICK.map(([n, c], i) => `<button type="button" class="favchip" data-q="${i}">${n}</button>`).join('')}</div>
+    <input class="in" id="exQ" placeholder="🔍 운동 검색 (예: 푸시업, 러닝, 레그 프레스)">
+    <div class="favpanel" id="quick"></div>
     <div id="rows">${exRowEdit({ category: '유산소' })}</div>
     <button class="add" id="add">+ 운동 더 추가</button>
     <div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
   $('#add').onclick = () => $('#rows').insertAdjacentHTML('beforeend', exRowEdit({ category: '유산소' }));
-  $('#quick').onclick = (e) => { const b = e.target.closest('[data-q]'); if (!b) return; const [name, category] = EX_QUICK[b.dataset.q];
+  let shown = [];
+  const chipHtml = (x, i) => `<button type="button" class="favchip" data-q="${i}">${esc(x.name)}${x.weight ? ` · ${x.weight}kg` : ''}</button>`;
+  const drawQuick = () => {
+    const q = $('#exQ').value.trim();
+    if (!q) { const rec = recentExercises(); shown = rec.length ? rec : EX_DB.filter((x) => ['걷기', '러닝', '푸시업', '스쿼트', '플랭크', '수영', '요가', '전신 스트레칭'].includes(x.name)); $('#quick').innerHTML = `<div class="desc small" style="margin:0 0 6px">${rec.length ? '최근 한 운동' : '자주 하는 운동'}</div>` + shown.map(chipHtml).join(''); return; }
+    shown = exSearch(q); const own = { name: q, category: '유산소', sets: null, reps: null, duration: null };
+    $('#quick').innerHTML = shown.map(chipHtml).join('') + `<button type="button" class="favchip" data-q="own">'${esc(q)}' 직접 추가</button>`;
+    window.__exOwn = own;
+  };
+  $('#exQ').oninput = drawQuick; drawQuick();
+  $('#quick').onclick = (e) => {
+    const b = e.target.closest('[data-q]'); if (!b) return;
+    const x = b.dataset.q === 'own' ? window.__exOwn : shown[b.dataset.q];
     const first = $('#rows .exrow'); if (first && !first.querySelector('.f-name').value.trim()) first.remove();
-    $('#rows').insertAdjacentHTML('beforeend', exRowEdit({ category, name })); };
+    $('#rows').insertAdjacentHTML('beforeend', exRowEdit({ category: x.category, name: x.name, sets: x.sets, reps: x.reps, duration: x.duration, weight: x.weight }));
+    $('#exQ').value = ''; drawQuick();
+  };
   wireExRows($('#rows'));
   $('#save').onclick = async () => {
     const added = readExRows($('#rows')).map(({ done, ...x }) => x);
@@ -1185,7 +1303,7 @@ function wireFoodSearch(root, onPick) {
     ALL = allFoods();
     const q = foodNorm(inp.value); if (!q) { res.innerHTML = ''; return; }
     const hit = ALL.map((f, i) => [f, i, foodNorm(f.name).indexOf(q)]).filter((x) => x[2] >= 0).sort((a, b) => a[2] - b[2]).slice(0, 10);
-    res.innerHTML = hit.length ? hit.map(([f, i]) => `<button type="button" class="favchip" data-i="${i}">${esc(f.name)} · ${Math.round(f.kcal * mult)}kcal</button>`).join('')
+    res.innerHTML = hit.length ? hit.map(([f, i]) => `<button type="button" class="favchip" data-i="${i}">${esc(f.name)} · ${f.grams ? Math.round(f.grams * mult) + 'g · ' : ''}${Math.round(f.kcal * mult)}kcal</button>`).join('')
       : '<div class="empty" style="padding:6px 0">목록에 없어요. 아래 「목록에 없는 음식 추가하기」로 추가하거나 직접 적어주세요.</div>';
   };
   inp.oninput = draw;
@@ -1281,7 +1399,7 @@ function favChipsHtml() {
   if (!favorites.length) return '<div class="empty" style="padding:6px 0">저장된 즐겨찾기가 없어요</div>';
   return FAV_CATS.map((c) => {
     const items = favorites.map((f, i) => [f, i]).filter(([f]) => favCat(f) === c);
-    return items.length ? `<div class="favcat">${c}</div>` + items.map(([f, i]) => `<button type="button" class="favchip" data-fav="${i}">${esc(f.name)}${f.kcal != null ? ` · ${f.kcal}kcal` : ''}</button>`).join('') : '';
+    return items.length ? `<div class="favcat">${c}</div>` + items.map(([f, i]) => `<button type="button" class="favchip" data-fav="${i}">${esc(f.name)}${f.grams ? ` · ${f.grams}g` : ''}${f.kcal != null ? ` · ${f.kcal}kcal` : ''}</button>`).join('') : '';
   }).join('');
 }
 function wireFavPanel(toggleBtn, panelEl, mealsBox) {
