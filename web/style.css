@@ -145,7 +145,7 @@ input[type="date"].in{overflow:hidden}
 .t-0{background:#e8f3ff;color:#3182f6}.t-1{background:#ffeeee;color:#f04452}.t-2{background:#e8f8ef;color:#03b26c}
 .mealrow{border:0;background:#f9fafb;border-radius:16px}
 .mealrow-bottom.four{grid-template-columns:repeat(4,1fr);gap:6px}
-.mealrow-bottom.four .unit-in input{padding:0 28px 0 8px}
+.mealrow-bottom.four .unit-in input{padding:0 26px 0 8px}
 .big-in input{height:64px;font-size:28px;font-weight:700;padding-right:48px}
 .big-in span{font-size:16px}
 .sheet .mealrow{background:#fff}
@@ -284,3 +284,17 @@ body.sheet-open{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 .act-row label.auto span{white-space:nowrap}
 
 .lift-hist{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}.lift-hist span{background:#f2f4f6;border-radius:10px;padding:5px 9px;font-size:13px;color:var(--sub)}.lift-hist b{color:var(--ink)}
+
+/* exercise rows: foldable + draggable */
+.exrow.collapsed .exfull{display:none}.exrow:not(.collapsed) .exsum{display:none}
+.exsum{display:grid;grid-template-columns:26px 1fr 26px;gap:6px;align-items:center}
+.exopen{display:flex;align-items:center;gap:8px;min-width:0;text-align:left;padding:8px 0}
+.exopen b{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:15px}
+.exopen small{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--sub);font-size:12px}
+.exopen i{font-style:normal;color:var(--sub);margin-left:auto}
+.exsum .rm,.exhead .rm,.exhead .exfold{color:var(--sub);font-size:16px}
+.drag{color:var(--sub);font-size:20px;line-height:1;touch-action:none;cursor:grab;user-select:none;-webkit-user-select:none}
+.exhead{grid-template-columns:24px 72px 1fr 26px 26px}
+.exrow2{display:grid;grid-template-columns:96px 1fr;gap:8px;margin-top:8px;align-items:start}
+.exrow2 .f-reps{height:46px;font-size:14px}.exrow2 .f-notes{min-height:76px;padding:10px 12px;font-size:14px;resize:none;line-height:1.5;height:auto}
+.exrow.dragging{opacity:.9;box-shadow:0 6px 20px rgba(0,0,0,.18);position:relative;z-index:2}
