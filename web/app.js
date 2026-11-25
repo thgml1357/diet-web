@@ -69,7 +69,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 사용방법 안내 v2 (입력창 밝게)';
+const APP_VERSION = '2026-11-25 · 계획 탭 정리';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -560,7 +560,7 @@ function viewRecord() {
   </div>
   ${r.inbody ? `<div class="card"><div class="card-title">인바디<span class="ib-tag">측정일</span></div>${ibGrid(r.inbody, ibRecs().filter((x) => x.date < recordDate).pop()?.inbody)}</div>` : ''}
   <div class="card"><div class="eyebrow">식단</div>${mealGroupsHtml(r.meals)}</div>
-  <div class="card"><div class="eyebrow">운동</div>${(r.exercises || []).map(exRowView).join('') || '<div class="empty">기록된 운동이 없어요</div>'}</div>`;
+  <div class="card"><div class="eyebrow">운동</div>${(r.exercises || []).map((e) => exRowView(e)).join('') || '<div class="empty">기록된 운동이 없어요</div>'}</div>`;
 }
 
 function viewMeals() {
@@ -724,7 +724,7 @@ function viewPlan() {
     <p class="desc">체중 기준 주 0.5kg 감량 속도로 맞췄어요. 건강을 위해 ${KCAL_FLOOR.toLocaleString()}kcal 아래로는 내려가지 않아요. 허리에 무리 없는 운동만 넣었어요.</p>
     <button class="btn" data-plan="gen">${dateLabel(planDate)} 추천 플랜으로 채우기</button><button class="btn ghost" data-plan="genweek">앞으로 7일 한 번에 채우기</button></div>
   <div class="card"><div class="card-title">식단<span class="sub">${(planData.meals || []).reduce((a, m) => a + (m.kcal || 0), 0).toLocaleString()} kcal</span></div>${mealGroupsHtml(planData.meals)}<button class="btn ghost" data-plan="meals">식단 편집</button></div>
-  <div class="card"><div class="card-title">운동</div>${(planData.exercises || []).map(exRowView).join('') || '<div class="empty">계획된 운동이 없어요</div>'}<button class="btn ghost" data-plan="exercises">운동 편집</button></div>`;
+  <div class="card"><div class="card-title">운동</div>${(planData.exercises || []).map((e) => exRowView(e)).join('') || '<div class="empty">계획된 운동이 없어요</div>'}<button class="btn ghost" data-plan="exercises">운동 편집</button></div>`;
 }
 
 /* ---------------- sheet (view / editor) ---------------- */
@@ -1148,7 +1148,7 @@ function renderView(date) {
   <div class="two"><div class="stat"><small>몸무게</small><b>${r.weight != null ? Number(r.weight).toFixed(2) + ' kg' : '–'}</b></div><div class="stat"><small>걸음 수</small><b>${r.steps ?? '–'}</b></div></div>
   <div class="two" style="margin-top:10px"><div class="stat"><small>섭취</small><b>${kcal(r.calories_consumed)}</b></div><div class="stat"><small>소모</small><b>${kcal(r.calories_burned)}</b></div></div>
   ${ibMini(r.inbody)}<label class="f">식사</label>${mealGroupsHtml(r.meals)}
-  <label class="f">운동</label>${(r.exercises || []).map(exRowView).join('') || '<div class="empty">기록된 운동이 없어요</div>'}`);
+  <label class="f">운동</label>${(r.exercises || []).map((e) => exRowView(e)).join('') || '<div class="empty">기록된 운동이 없어요</div>'}`);
   $('#toEdit').onclick = () => renderEdit(date);
 }
 function renderEdit(date) {
