@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 탭 이름 변경, 음식 검색 정리';
+const APP_VERSION = '2026-11-25 · 음식 추가 개편(담기·합계·소수점)';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -301,7 +301,7 @@ async function syncRecordFromPlan(date, plan) {
   const meals = (r.meals || []).filter((m) => !m.plan).concat(plan.meals.map((m) => actualOf(m, 'meals')).filter(Boolean));
   const exercises = (r.exercises || []).filter((x) => !x.plan).concat(plan.exercises.map((x) => actualOf(x, 'exercises')).filter(Boolean));
   const sum = meals.reduce((a, m) => a + (m.kcal || 0), 0);
-  const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: sum || null, calories_burned: calcBurn({ ...r, exercises }) ?? r.calories_burned ?? null, meals, exercises };
+  const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: Math.round(sum) || null, calories_burned: calcBurn({ ...r, exercises }) ?? r.calories_burned ?? null, meals, exercises };
   await store.save(rec);
   cache[date] = { ...r, ...rec };
 }
@@ -372,7 +372,7 @@ function openMealSwapSheet(type) {
     <p class="desc small">계획한 ${type} ${n}개는 '안 먹음'으로 두고, 실제로 먹은 음식만 기록해요.</p>
     ${foodSearchHtml()}
     <div id="rows">${mealRowEdit({ type })}</div>
-    <div class="favrow"><button class="add" id="add">+ 음식 더 추가</button><button class="add" id="favToggle">☆ 자주 먹는 음식에서 추가</button></div>
+    <div class="food-actions"><button class="btn ghost" id="add">+ 음식 더 추가</button><button class="btn ghost" id="favToggle">☆ 자주 먹는 음식에서 추가</button></div>
     <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
     <div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
   $('#add').onclick = wireMealRows($('#rows'));
@@ -423,7 +423,7 @@ function openStatusSheet(kind, i) {
       <div class="two" style="margin-top:8px">
         ${isMeal ? `<label class="unit-in"><input id="aG" type="number" inputmode="decimal" value="${a.grams ?? ''}" placeholder="0"><span>g</span></label>`
           : `<label class="unit-in"><input id="aMin" type="number" inputmode="numeric" value="${a.duration ?? ''}" placeholder="0"><span>분</span></label>`}
-        <label class="unit-in"><input id="aK" type="number" inputmode="numeric" value="${a.kcal ?? ''}" placeholder="${isMeal ? '0' : '자동'}"><span>kcal</span></label>
+        <label class="unit-in"><input id="aK" type="number" inputmode="decimal" step="any" value="${a.kcal ?? ''}" placeholder="${isMeal ? '0' : '자동'}"><span>kcal</span></label>
       </div>
       ${isMeal ? `<label class="f">비슷한 칼로리 대체 메뉴</label><div class="favpanel" id="aAlt">${altFoods(item).map((f, i) => `<button type="button" class="favchip" data-i="${FOODS.indexOf(f) >= 0 ? FOODS.indexOf(f) : -1}" data-n="${esc(f.name)}">${esc(f.name)} · ${f.grams ? f.grams + 'g · ' : ''}${f.kcal}kcal</button>`).join('') || '<div class="empty" style="padding:6px 0">추천할 메뉴가 없어요</div>'}</div>
         <label class="f">음식 검색</label>${foodSearchHtml()}
@@ -580,7 +580,7 @@ function viewHome() {
   const items = [...todayPlan.meals, ...todayPlan.exercises];
   const doneN = items.filter((x) => itemStatus(x)).length;
   const pct = items.length ? Math.round((doneN / items.length) * 100) : 0;
-  const ateKcal = (t?.meals || []).reduce((a, x) => a + (x.kcal || 0), 0);
+  const ateKcal = Math.round((t?.meals || []).reduce((a, x) => a + (x.kcal || 0), 0));
   const ICON = { done: '✓', swap: '↔', skip: '–', '': '' };
   const mealExtraToday = (t?.meals || []).filter((x) => !x.plan);
   const sumRow = (type, ms, xs) => {
@@ -965,23 +965,42 @@ function guessMealType(date) {
 }
 // food-only entry: adds to the day's record without touching weight, steps, exercise or the plan
 function openFoodSheet(date) {
+  let cur = guessMealType(date);
+  const fmtK = (n) => (Number.isInteger(n) ? n : +n.toFixed(1)).toLocaleString();
   openSheet(`<div class="sheet-head"><h2>${dateLabel(date)} 음식 추가</h2></div>
-    <p class="desc small">계획에 없던 음식만 적어요. 다른 기록은 그대로예요.</p>
+    <div class="seg scroll" id="mtype">${MEAL_TYPES.map((t) => `<button type="button" data-t="${t}"${t === cur ? ' class="on"' : ''}>${t}</button>`).join('')}</div>
     ${foodSearchHtml()}
-    <div id="rows">${mealRowEdit({ type: guessMealType(date) })}</div>
-    <div class="favrow"><button class="add" id="add">+ 음식 더 추가</button><button class="add" id="favToggle">☆ 자주 먹는 음식에서 추가</button></div>
+    <div class="food-list-head"><b>담은 음식 <span id="fcnt">0</span></b></div>
+    <div class="empty" id="rowsHint">검색해서 누르거나, 아래 「직접 입력」으로 적어요</div>
+    <div id="rows" class="rows-compact"></div>
+    <div class="food-actions"><button type="button" class="btn ghost" id="add">＋ 직접 입력</button><button type="button" class="btn ghost" id="favToggle">☆ 자주 먹는 음식</button></div>
     <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
-    <div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
-  $('#add').onclick = wireMealRows($('#rows'));
-  wireFavPanel($('#favToggle'), $('#favPanel'), $('#rows'));
-  wireFoodSearch(sheet.querySelector('.fs'), (f) => addFoodRow($('#rows'), { type: SNACKISH.includes(f.cat) ? '간식' : guessMealType(date), name: f.name, grams: f.grams, kcal: f.kcal, ui: f.ui }));
+    <div class="err" id="err"></div>
+    <div class="food-foot"><span class="food-tot">합계 <b id="ftot">0</b> kcal</span><button class="btn" id="save">저장</button></div>`);
+  const box = $('#rows'), curType = () => cur;
+  const upd = () => {
+    const rows = [...box.querySelectorAll('.mealrow')];
+    $('#fcnt').textContent = rows.length; $('#rowsHint').hidden = rows.length > 0;
+    $('#ftot').textContent = fmtK(rows.reduce((a, r) => a + (Number(r.querySelector('.f-kcal').value) || 0), 0));
+  };
+  new MutationObserver(upd).observe(box, { childList: true });
+  box.addEventListener('input', (e) => { // grams → kcal follows the food's kcal-per-gram
+    const row = e.target.closest('.mealrow');
+    if (row && e.target.classList.contains('f-g') && row.dataset.kpg) row.querySelector('.f-kcal').value = Math.round(Number(e.target.value || 0) * Number(row.dataset.kpg) * 10) / 10;
+    upd();
+  });
+  $('#mtype').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; cur = b.dataset.t; $('#mtype').querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); box.querySelectorAll('.sel-type').forEach((sel) => (sel.value = cur)); };
+  wireMealRows(box);
+  $('#add').onclick = () => { box.insertAdjacentHTML('beforeend', mealRowEdit({ type: cur })); box.lastElementChild.querySelector('.f-name').focus(); };
+  wireFavPanel($('#favToggle'), $('#favPanel'), box, curType);
+  wireFoodSearch(sheet.querySelector('.fs'), (f) => addFoodRow(box, { type: cur, name: f.name, grams: f.grams, kcal: f.kcal, ui: f.ui }));
   $('#save').onclick = async () => {
-    const added = readMealRows($('#rows'));
-    if (!added.length) { $('#err').textContent = '음식 이름을 입력해주세요.'; return; }
+    const added = readMealRows(box);
+    if (!added.length) { $('#err').textContent = '음식을 하나 이상 담아 주세요.'; return; }
     const r = cache[date] || {};
     const meals = [...(r.meals || []), ...added];
-    const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: meals.reduce((a, m) => a + (m.kcal || 0), 0) || null, calories_burned: r.calories_burned ?? null, meals, exercises: r.exercises || [] };
-    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = authMsg(e); }
+    const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: Math.round(meals.reduce((a, m) => a + (m.kcal || 0), 0)) || null, calories_burned: r.calories_burned ?? null, meals, exercises: r.exercises || [] };
+    try { await store.save(rec); closeSheet(); await window.__refresh(); } catch (e) { $('#err').textContent = authMsg(e); }
   };
 }
 
@@ -1377,7 +1396,7 @@ function foodSearchHtml() {
       <input class="in fa-name" maxlength="36" placeholder="음식 이름 (예: 텐텐)">
       <label class="f" style="margin-top:8px">먹는 단위</label>
       <select class="in fa-unit"><option value="">1인분(한 번에 먹는 양)</option>${FOOD_UNITS.map((u) => `<option value="${u}">낱개 · 1${u}</option>`).join('')}</select>
-      <div class="two" style="margin-top:8px"><label class="unit-in"><input class="fa-g" type="number" inputmode="decimal" placeholder="1회(1개)당 g"><span>g</span></label><label class="unit-in"><input class="fa-k" type="number" inputmode="numeric" placeholder="0"><span>kcal</span></label></div>
+      <div class="two" style="margin-top:8px"><label class="unit-in"><input class="fa-g" type="number" inputmode="decimal" placeholder="1회(1개)당 g"><span>g</span></label><label class="unit-in"><input class="fa-k" type="number" inputmode="decimal" step="any" placeholder="0"><span>kcal</span></label></div>
       <div class="seg scroll fa-cat" style="margin-top:8px">${FOOD_CATS.map((c, i) => `<button type="button" data-c="${c}"${i === 2 ? ' class="on"' : ''}>${c}</button>`).join('')}</div>
       <p class="desc small" style="margin:4px 0 8px">낱개를 고르면 <b>1개당</b> g과 kcal를 적어요. 나중에 개수로 입력할 수 있어요. 관리자가 승인하면 모든 사용자의 검색에 보여요. 승인 전에는 나만 볼 수 있어요.</p>
       <button type="button" class="btn fa-submit">목록에 추가</button><div class="err fa-err"></div>
@@ -1438,7 +1457,7 @@ function altFoods(item) {
 function mealRowEdit(v = {}, opts = {}) {
   const on = v.name && isFavorite(v.name);
   const star = opts.star === false ? '' : `<button type="button" class="favstar${on ? ' on' : ''}" title="즐겨찾기에 저장">${on ? '★' : '☆'}</button>`;
-  return `<div class="mealrow" data-plan="${v.plan ? 1 : ''}" ${stAttrs(v)}${v.ui ? ` data-ui="${encodeURIComponent(JSON.stringify(v.ui))}" data-n="1"` : ''}>
+  return `<div class="mealrow" data-plan="${v.plan ? 1 : ''}" ${stAttrs(v)}${v.grams > 0 && v.kcal != null ? ` data-kpg="${v.kcal / v.grams}"` : ''}${v.ui ? ` data-ui="${encodeURIComponent(JSON.stringify(v.ui))}" data-n="1"` : ''}>
     <div class="mealrow-top">
       <select class="in sel-type">${MEAL_TYPES.map((t) => `<option${v.type === t ? ' selected' : ''}>${t}</option>`).join('')}</select>
       <input class="in f-name" placeholder="음식명" value="${esc(v.name ?? '')}">
@@ -1446,7 +1465,7 @@ function mealRowEdit(v = {}, opts = {}) {
     </div>
     <div class="mealrow-bottom">
       <label class="unit-in"><input class="f-g" type="number" inputmode="decimal" placeholder="0" value="${v.grams ?? ''}"><span>g</span></label>
-      <label class="unit-in"><input class="f-kcal" type="number" inputmode="numeric" placeholder="0" value="${v.kcal ?? ''}"><span>kcal</span></label>
+      <label class="unit-in"><input class="f-kcal" type="number" inputmode="decimal" step="any" placeholder="0" value="${v.kcal ?? ''}"><span>kcal</span></label>
     </div>
   </div>`;
 }
@@ -1494,11 +1513,11 @@ function favChipsHtml() {
     return items.length ? `<div class="favcat">${c}</div>` + items.map(([f, i]) => `<button type="button" class="favchip" data-fav="${i}">${esc(f.name)}${f.grams ? ` · ${f.grams}g` : ''}${f.kcal != null ? ` · ${f.kcal}kcal` : ''}</button>`).join('') : '';
   }).join('');
 }
-function wireFavPanel(toggleBtn, panelEl, mealsBox) {
+function wireFavPanel(toggleBtn, panelEl, mealsBox, typeFn) {
   toggleBtn.onclick = () => { panelEl.hidden = !panelEl.hidden; };
   panelEl.onclick = (e) => {
     const c = e.target.closest('.favchip'); if (!c) return;
-    mealsBox.insertAdjacentHTML('beforeend', mealRowEdit(favorites[c.dataset.fav]));
+    mealsBox.insertAdjacentHTML('beforeend', mealRowEdit({ ...favorites[c.dataset.fav], ...(typeFn ? { type: typeFn() } : {}) }));
   };
 }
 /* favorites management: name + grams/kcal only, no meal-type */
@@ -1511,7 +1530,7 @@ function favRowEdit(v = {}) {
     </div>
     <div class="mealrow-bottom">
       <label class="unit-in"><input class="f-g" type="number" inputmode="decimal" placeholder="0" value="${v.grams ?? ''}"><span>g</span></label>
-      <label class="unit-in"><input class="f-kcal" type="number" inputmode="numeric" placeholder="0" value="${v.kcal ?? ''}"><span>kcal</span></label>
+      <label class="unit-in"><input class="f-kcal" type="number" inputmode="decimal" step="any" placeholder="0" value="${v.kcal ?? ''}"><span>kcal</span></label>
     </div>
   </div>`;
 }
@@ -1561,7 +1580,7 @@ function renderEdit(date) {
   <div><label class="f">섭취 칼로리</label><input class="in" id="f-in" type="number" inputmode="numeric" placeholder="식단 합계 자동" value="${r.calories_consumed ?? ''}"></div>
   <div><label class="f">소모 칼로리 (Apple Watch)</label><input class="in" id="f-out" type="number" inputmode="numeric" value="${r.calories_burned ?? ''}"></div></div>
   <label class="f">식사</label><div id="meals">${(r.meals || []).map((m) => mealRowEdit(m)).join('')}</div>
-  <div class="favrow"><button class="add" id="addMeal">+ 식사 추가</button><button class="add" id="favToggle">☆ 즐겨찾기에서 추가</button></div>
+  <div class="food-actions"><button class="btn ghost" id="addMeal">+ 식사 추가</button><button class="btn ghost" id="favToggle">☆ 즐겨찾기에서 추가</button></div>
   <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
   <label class="f">운동</label><div id="exs">${(r.exercises || []).map((e) => exRowEdit(e, { collapsed: true })).join('')}</div><button class="add" id="addEx">+ 운동 추가</button>
   <div class="err" id="err"></div>
@@ -1576,7 +1595,7 @@ function renderEdit(date) {
     const w = num($('#f-weight').value);
     const rec = {
       date, weight: w == null ? null : Math.round(w * 100) / 100, steps: num($('#f-steps').value),
-      calories_consumed: num($('#f-in').value) ?? (meals.length ? meals.reduce((a, m) => a + (m.kcal || 0), 0) : null),
+      calories_consumed: num($('#f-in').value) ?? (meals.length ? Math.round(meals.reduce((a, m) => a + (m.kcal || 0), 0)) : null),
       calories_burned: num($('#f-out').value), meals, exercises,
     };
     try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = authMsg(e); }
@@ -1615,7 +1634,7 @@ function renderPicker() {
 async function editPlanMeals() {
   const rows = (planData.meals || []).map((x) => mealRowEdit(x)).join('');
   openSheet(`<div class="sheet-head"><h2>${dateLabel(planDate)} 식단 계획</h2></div>${foodSearchHtml()}<div id="rows">${rows}</div>
-  <div class="favrow"><button class="add" id="add">+ 추가</button><button class="add" id="favToggle">☆ 즐겨찾기에서 추가</button></div>
+  <div class="food-actions"><button class="btn ghost" id="add">+ 추가</button><button class="btn ghost" id="favToggle">☆ 즐겨찾기에서 추가</button></div>
   <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
   <div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
   $('#add').onclick = wireMealRows($('#rows'));
@@ -1672,7 +1691,7 @@ function exRowEdit(v = {}, o = {}) {
         <label class="unit-in"><input class="f-min" type="number" inputmode="numeric" placeholder="0" value="${v.duration ?? ''}"><span>분</span></label>
         <label class="unit-in"><input class="f-sets" type="number" inputmode="numeric" placeholder="0" value="${v.sets ?? ''}"><span>세트</span></label>
         <label class="unit-in"><input class="f-w" type="number" step="0.5" inputmode="decimal" placeholder="0" value="${v.weight ?? ''}"><span>kg</span></label>
-        <label class="unit-in"><input class="f-kcal" type="number" inputmode="numeric" placeholder="자동" value="${v.kcal ?? ''}"><span>kcal</span></label>
+        <label class="unit-in"><input class="f-kcal" type="number" inputmode="decimal" step="any" placeholder="자동" value="${v.kcal ?? ''}"><span>kcal</span></label>
       </div>
       <div class="exrow2"><input class="in f-reps" placeholder="횟수 (12회)" value="${esc(v.reps ?? '')}">
         <textarea class="in f-notes" rows="3" placeholder="메모 (자세, 속도, 느낌 등)">${esc(v.notes ?? '')}</textarea></div>
@@ -1763,6 +1782,7 @@ async function refreshPlan() { planData = { meals: await store.meals.get(planDat
 async function loadToday() { todayPlan = { meals: await store.meals.get(today), exercises: await store.exercises.get(today) }; if (mealDate === today) dayPlan = todayPlan; }
 async function loadDay() { dayPlan = mealDate === today ? todayPlan : { meals: await store.meals.get(mealDate), exercises: await store.exercises.get(mealDate) }; }
 async function setMealDate(d) { mealDate = d; await loadDay(); render(); }
+window.__refresh = () => refresh();
 async function refresh() { await loadAll(); await loadToday(); if (tab === 'plan') { planData = { meals: await store.meals.get(planDate), exercises: await store.exercises.get(planDate) }; weekStats = await loadWeekStats(planDate); } if (tab === 'meals') await loadDay(); render(); }
 function render() {
   const v = $('#view');
@@ -2107,7 +2127,7 @@ function openExtraMealSheet(x) {
     <div class="err" id="err"></div><button class="btn" id="save">저장</button><button class="btn ghost" id="del" style="color:var(--up)">삭제</button>`);
   sheet.querySelectorAll('.rm').forEach((b) => b.remove());
   const put = async (meals) => {
-    const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: meals.reduce((a, v) => a + (v.kcal || 0), 0) || null, calories_burned: r.calories_burned ?? null, meals, exercises: r.exercises || [] };
+    const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: Math.round(meals.reduce((a, v) => a + (v.kcal || 0), 0)) || null, calories_burned: r.calories_burned ?? null, meals, exercises: r.exercises || [] };
     try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = authMsg(e); }
   };
   $('#save').onclick = () => { const n = readMealRows($('#rows'))[0]; if (!n) { $('#err').textContent = '음식 이름을 입력해주세요.'; return; } const meals = [...r.meals]; meals[i] = n; put(meals); };
