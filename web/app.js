@@ -569,7 +569,7 @@ function viewMeals() {
   const groups = MEAL_TYPES.map((type) => {
     const rows = dayPlan.meals.map((m, i) => [m, i]).filter(([m]) => m.type === type);
     const allSkip = rows.length && rows.every(([m]) => itemStatus(m) === 'skip');
-    return rows.length ? `<div class="mg-label">${type}<button type="button" class="skipall" data-skipmeal="${type}">${allSkip ? '안 먹음 취소' : '안 먹었어요'}</button></div>${rows.map(([m, i]) => checkRow('meals', i, m)).join('')}` : '';
+    return rows.length ? `<div class="mg-label mg-flex">${type}<button type="button" class="skipall${allSkip ? ' undo' : ''}" data-skipmeal="${type}">${allSkip ? '안 먹음 취소' : '안 먹었어요'}</button></div>${rows.map(([m, i]) => checkRow('meals', i, m)).join('')}` : '';
   }).join('');
   const extra = (r.meals || []).filter((m) => !m.plan);
   const exExtra = (r.exercises || []).filter((x) => !x.plan);
@@ -720,12 +720,28 @@ function viewPlan() {
 
 /* ---------------- sheet (view / editor) ---------------- */
 const sheet = $('#sheet'), bg = $('#sheetBg');
+// iOS keyboard: keep the sheet inside the visible viewport and stop the page behind it from scrolling
+let lockedY = 0;
+function syncSheetViewport() {
+  const v = window.visualViewport; if (!v || sheet.hidden) return;
+  const kb = Math.max(0, Math.round(window.innerHeight - v.height - v.offsetTop));
+  sheet.style.bottom = kb + 'px';
+  sheet.style.maxHeight = Math.floor(v.height * 0.94) + 'px';
+  sheet.style.paddingBottom = kb > 0 ? '16px' : '';
+}
+if (window.visualViewport) { visualViewport.addEventListener('resize', syncSheetViewport); visualViewport.addEventListener('scroll', syncSheetViewport); }
+sheet.addEventListener('focusin', (e) => { const t = e.target; if (/INPUT|SELECT|TEXTAREA/.test(t.tagName)) setTimeout(() => { syncSheetViewport(); t.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 320); });
 function openSheet(html) {
   sheet.innerHTML = `<div class="sheet-handle"></div>${html}`;
   sheet.style.transform = '';
+  if (sheet.hidden) { lockedY = window.scrollY; document.body.style.top = `-${lockedY}px`; document.body.classList.add('sheet-open'); }
   sheet.hidden = bg.hidden = false;
+  syncSheetViewport();
 }
-function closeSheet() { sheet.hidden = bg.hidden = true; sheet.style.transform = ''; }
+function closeSheet() {
+  if (!sheet.hidden) { try { document.activeElement?.blur(); } catch {} document.body.classList.remove('sheet-open'); document.body.style.top = ''; window.scrollTo(0, lockedY); }
+  sheet.hidden = bg.hidden = true; sheet.style.transform = ''; sheet.style.bottom = ''; sheet.style.maxHeight = ''; sheet.style.paddingBottom = '';
+}
 bg.onclick = closeSheet;
 sheet.addEventListener('click', (e) => { const fav = e.target.closest('.favmini'); if (fav) favMiniClick(fav); });
 
