@@ -69,6 +69,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
+const APP_VERSION = '2026-11-25 · 설정 직접입력 + 사용방법 안내';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -667,6 +668,7 @@ function viewSettings() {
     <div class="eyebrow">도움말</div>
     <button type="button" class="in daterow" id="tourBtn" style="margin:6px 0 16px">사용방법 보기<span class="chev">›</span></button>
     <div class="eyebrow">모드</div><div style="margin:6px 0 16px">${store?.label || ''}</div>
+    <div class="eyebrow">앱 버전</div><div style="margin:6px 0 16px;color:var(--sub);font-size:13px">${APP_VERSION}</div>
     ${store?.mode === 'supabase' ? `<div class="eyebrow">내 기록 공유하기</div>
     <button type="button" class="in daterow" id="shareBtn" style="margin:6px 0 16px">${shareToken ? '공유 중 · 링크 보기' : '읽기 전용 링크 만들기'}<span class="chev">›</span></button>
     <div class="eyebrow">계정 관리</div>
