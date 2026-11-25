@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 불꼬마·물·컨디션·주간 리포트';
+const APP_VERSION = '2026-11-25 · 낱개 음식 개수 입력';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -1165,6 +1165,10 @@ sheet.addEventListener('click', (e) => { const fav = e.target.closest('.favmini'
 })();
 
 /* meal row editor: type + name + grams/kcal with unit labels */
+// foods that are eaten by count ("텐텐 1개(낱개)", "김밥 1줄") get a base name + unit, so people can type a count
+const FOOD_UNITS = ['개', '장', '조각', '꼬치', '칸', '줄', '캔', '병', '잔', '알', '컵', '봉'];
+const UNIT_RE = new RegExp(`^(.*?)\\s*1(${FOOD_UNITS.join('|')})(?:\\(낱개\\))?$`);
+function unitOf(name) { const m = UNIT_RE.exec(name || ''); return m && m[1] ? { base: m[1].trim(), unit: m[2] } : {}; }
 const FOODS = `
 현미밥 1공기|210|310|식사
 백미밥 1공기|210|310|식사
@@ -1373,7 +1377,7 @@ const FOODS = `
 고구마 말랭이|50|150|간식
 핫도그 1개|100|280|디저트
 약과 1개|40|170|디저트
-`.trim().split('\n').map((l) => { const [name, grams, kcal, cat] = l.split('|'); return { name, grams: +grams, kcal: +kcal, cat }; });
+`.trim().split('\n').map((l) => { const [name, grams, kcal, cat] = l.split('|'); return { name, grams: +grams, kcal: +kcal, cat, ...unitOf(name) }; });
 
 const SNACKISH = ['간식', '음료', '디저트'];
 const foodNorm = (t) => t.toLowerCase().replace(/\s+/g, '');
@@ -1383,40 +1387,47 @@ const FOOD_CATS = ['식사', '외식', '간식', '음료', '디저트'];
 function allFoods(approvedOnly) {
   const names = new Set(FOODS.map((f) => f.name));
   const extra = customFoods.filter((f) => !names.has(f.name) && (f.status === 'approved' || (!approvedOnly && f.user_id === MY_UID)))
-    .map((f) => ({ name: f.name + (f.status === 'pending' ? ' (승인 대기)' : ''), grams: Number(f.grams) || 0, kcal: Number(f.kcal), cat: f.cat }));
+    .map((f) => ({ name: f.name, pending: f.status === 'pending', grams: Number(f.grams) || 0, kcal: Number(f.kcal), cat: f.cat, ...unitOf(f.name) }));
   return [...FOODS, ...extra];
 }
 function foodSearchHtml() {
   return `<div class="fs"><input class="in fs-in" placeholder="🔍 음식 검색 (예: 파스타, 라떼, 치킨)">
-    <div class="seg fs-mult">${[0.5, 1, 1.5, 2].map((m) => `<button type="button" data-m="${m}"${m === 1 ? ' class="on"' : ''}>${m === 1 ? '1인분' : m + '배'}</button>`).join('')}</div>
+    <div class="fs-qty"><span>수량</span><div class="seg fs-mult">${[0.5, 1, 2, 3, 5].map((m) => `<button type="button" data-m="${m}"${m === 1 ? ' class="on"' : ''}>${m}</button>`).join('')}</div>
+      <input class="in fs-q" type="number" inputmode="decimal" step="0.5" min="0.5" value="1" aria-label="수량 직접 입력"></div>
+    <p class="desc small fs-hint">낱개 음식은 개수로, 나머지는 몇 인분(배)인지로 계산돼요.</p>
     <div class="fs-res favpanel"></div>
     <button type="button" class="fs-addlink">+ 목록에 없는 음식 추가하기</button>
     <div class="fs-add" hidden>
-      <input class="in fa-name" maxlength="40" placeholder="음식 이름 (예: 텐텐 1개)">
-      <div class="two" style="margin-top:8px"><label class="unit-in"><input class="fa-g" type="number" inputmode="decimal" placeholder="0"><span>g</span></label><label class="unit-in"><input class="fa-k" type="number" inputmode="numeric" placeholder="0"><span>kcal</span></label></div>
+      <input class="in fa-name" maxlength="36" placeholder="음식 이름 (예: 텐텐)">
+      <label class="f" style="margin-top:8px">먹는 단위</label>
+      <select class="in fa-unit"><option value="">1인분(한 번에 먹는 양)</option>${FOOD_UNITS.map((u) => `<option value="${u}">낱개 · 1${u}</option>`).join('')}</select>
+      <div class="two" style="margin-top:8px"><label class="unit-in"><input class="fa-g" type="number" inputmode="decimal" placeholder="1회(1개)당 g"><span>g</span></label><label class="unit-in"><input class="fa-k" type="number" inputmode="numeric" placeholder="0"><span>kcal</span></label></div>
       <div class="seg scroll fa-cat" style="margin-top:8px">${FOOD_CATS.map((c, i) => `<button type="button" data-c="${c}"${i === 2 ? ' class="on"' : ''}>${c}</button>`).join('')}</div>
-      <p class="desc small" style="margin:4px 0 8px">1회 먹는 양(낱개면 1개) 기준으로 적어요. 관리자가 승인하면 모든 사용자의 검색에 보여요. 승인 전에는 나만 볼 수 있어요.</p>
+      <p class="desc small" style="margin:4px 0 8px">낱개를 고르면 <b>1개당</b> g과 kcal를 적어요. 나중에 개수로 입력할 수 있어요. 관리자가 승인하면 모든 사용자의 검색에 보여요. 승인 전에는 나만 볼 수 있어요.</p>
       <button type="button" class="btn fa-submit">목록에 추가</button><div class="err fa-err"></div>
     </div></div>`;
 }
 function wireFoodSearch(root, onPick) {
-  const inp = root.querySelector('.fs-in'), res = root.querySelector('.fs-res'); let mult = 1, ALL = allFoods();
+  const inp = root.querySelector('.fs-in'), res = root.querySelector('.fs-res'), qin = root.querySelector('.fs-q'); let mult = 1, ALL = allFoods();
+  const fq = (n) => (Number.isInteger(n) ? n : +n.toFixed(1));
+  const gramsOf = (f) => (f.grams ? Math.round(f.grams * mult * 10) / 10 : 0);
+  const label = (f) => (f.unit ? `${f.base} ${fq(mult)}${f.unit}` : f.name) + (f.pending ? ' (승인 대기)' : '');
+  const chip = (f, i) => `<button type="button" class="favchip" data-i="${i}">${esc(label(f))} · ${f.grams ? gramsOf(f) + 'g · ' : ''}${Math.round(f.kcal * mult)}kcal</button>`;
   const draw = () => {
     ALL = allFoods();
     const q = foodNorm(inp.value);
-    if (!q) { ALL = recentFoods(); res.innerHTML = ALL.length ? `<div class="desc small" style="margin:0 0 6px">최근 먹은 음식</div>` + ALL.map((f, i) => `<button type="button" class="favchip" data-i="${i}">${esc(f.name)} · ${f.grams ? Math.round(f.grams * mult) + 'g · ' : ''}${Math.round(f.kcal * mult)}kcal</button>`).join('') : ''; return; }
+    if (!q) { ALL = recentFoods(); res.innerHTML = ALL.length ? `<div class="desc small" style="margin:0 0 6px">최근 먹은 음식</div>` + ALL.map(chip).join('') : ''; return; }
     const hit = ALL.map((f, i) => [f, i, foodNorm(f.name).indexOf(q)]).filter((x) => x[2] >= 0).sort((a, b) => a[2] - b[2]).slice(0, 10);
-    res.innerHTML = hit.length ? hit.map(([f, i]) => `<button type="button" class="favchip" data-i="${i}">${esc(f.name)} · ${f.grams ? Math.round(f.grams * mult) + 'g · ' : ''}${Math.round(f.kcal * mult)}kcal</button>`).join('')
+    res.innerHTML = hit.length ? hit.map(([f, i]) => chip(f, i)).join('')
       : '<div class="empty" style="padding:6px 0">목록에 없어요. 아래 「목록에 없는 음식 추가하기」로 추가하거나 직접 적어주세요.</div>';
   };
   inp.oninput = draw; draw();
-  root.querySelector('.fs-mult').onclick = (e) => {
-    const b = e.target.closest('button'); if (!b) return; mult = Number(b.dataset.m);
-    root.querySelectorAll('.fs-mult button').forEach((x) => x.classList.toggle('on', x === b)); draw();
-  };
+  const setMult = (v) => { mult = v > 0 ? v : 1; root.querySelectorAll('.fs-mult button').forEach((x) => x.classList.toggle('on', Number(x.dataset.m) === mult)); draw(); };
+  root.querySelector('.fs-mult').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; qin.value = b.dataset.m; setMult(Number(b.dataset.m)); };
+  qin.oninput = () => setMult(Number(qin.value));
   res.onclick = (e) => {
     const c = e.target.closest('.favchip'); if (!c) return; const f = ALL[c.dataset.i];
-    onPick({ name: f.name, grams: Math.round(f.grams * mult), kcal: Math.round(f.kcal * mult), cat: f.cat });
+    onPick({ name: f.unit ? `${f.base} ${fq(mult)}${f.unit}` : f.name, grams: gramsOf(f), kcal: Math.round(f.kcal * mult), cat: f.cat });
     inp.value = ''; res.innerHTML = '';
   };
   // let users add foods that are missing from the list (visible to everyone after admin approval)
@@ -1424,7 +1435,8 @@ function wireFoodSearch(root, onPick) {
   root.querySelector('.fs-addlink').onclick = () => { panel.hidden = !panel.hidden; if (!panel.hidden) { root.querySelector('.fa-name').value = inp.value.trim(); root.querySelector('.fa-name').focus(); } };
   root.querySelector('.fa-cat').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; cat = b.dataset.c; root.querySelectorAll('.fa-cat button').forEach((x) => x.classList.toggle('on', x === b)); };
   root.querySelector('.fa-submit').onclick = async () => {
-    const name = root.querySelector('.fa-name').value.trim(), kc = num(root.querySelector('.fa-k').value), g = num(root.querySelector('.fa-g').value);
+    let name = root.querySelector('.fa-name').value.trim(); const unit = root.querySelector('.fa-unit').value, kc = num(root.querySelector('.fa-k').value), g = num(root.querySelector('.fa-g').value);
+    if (name && unit && !unitOf(name).unit) name = `${name} 1${unit}`; // count foods are stored as "<name> 1<unit>" so everyone can type a count
     if (!name) { fe.textContent = '음식 이름을 입력해 주세요.'; return; }
     if (kc == null || kc < 0 || kc > 3000) { fe.textContent = 'kcal를 0~3000 사이로 입력해 주세요.'; return; }
     try {
@@ -1432,7 +1444,7 @@ function wireFoodSearch(root, onPick) {
       if (IS_ADMIN && row?.id && row.status !== 'approved') { await store.foods.review(row.id, 'approved'); row = { ...row, status: 'approved' }; }
       customFoods.push(row); fe.textContent = ''; panel.hidden = true;
       ['.fa-name', '.fa-g', '.fa-k'].forEach((c) => (root.querySelector(c).value = ''));
-      inp.value = name; draw();
+      inp.value = unitOf(name).base || name; draw();
       res.insertAdjacentHTML('afterbegin', `<div class="desc small" style="color:var(--blue);margin-bottom:6px">추가했어요${row.status === 'approved' ? '' : ' · 승인되면 모두에게 보여요'}</div>`);
     } catch (e) { fe.textContent = authMsg(e); }
   };
