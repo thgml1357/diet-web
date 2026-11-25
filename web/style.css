@@ -375,3 +375,16 @@ html,body,*{scrollbar-width:none;-ms-overflow-style:none}
 .food-foot .btn{flex:1;margin:0}.food-tot{font-size:13px;color:var(--sub);white-space:nowrap}.food-tot b{font-size:20px;color:var(--ink);margin:0 2px}
 .food-actions .btn.ghost{background:var(--card,#fff);color:var(--blue);border:1.5px solid var(--blue);border-radius:14px;font-weight:700}
 .food-actions .btn.ghost:active{background:var(--blue);color:#fff}
+
+/* 오늘 탭: 큰 덩어리 할 일 칩 · 새 표정 · 물 */
+.hero2 .tasks{display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-top:12px}
+.tk{display:inline-flex;align-items:center;gap:4px;font-size:12px;font-weight:700;padding:6px 10px;border-radius:999px;background:var(--bg);color:var(--sub)}
+.tk i{font-style:normal;font-size:12px}
+.tk-good{background:#e3f8ef;color:#0b8f66}.tk-ok{background:#fff3df;color:#c77700}.tk-bad{background:#ffe8e6;color:#d93a2b}.tk-part{background:var(--blue-bg);color:var(--blue)}
+.hero2[data-m=worry] .ring .fg,.hero2[data-m=stern] .ring .fg,.hero2[data-m=sly] .ring .fg{stroke:#ff8a00}
+.hero2[data-m=worry] .mascot,.hero2[data-m=stern] .mascot,.hero2[data-m=sly] .mascot{animation:hsway 4s ease-in-out infinite}
+.wbar{height:10px;border-radius:99px;background:var(--bg);overflow:hidden;margin:6px 0 8px}
+.wbar i{display:block;height:100%;border-radius:99px;background:#3182f6;transition:width .3s}.wbar.full i{background:#12b886}
+.wwhy{font-size:12px;color:var(--sub);line-height:1.5;margin-bottom:10px}
+.wbtns{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:8px}.wbtns .btn{margin:0;height:44px;font-size:14px;padding:0}
+.wbtns .btn.ghost{background:#fff;color:var(--blue);border:1.5px solid var(--blue);border-radius:14px;font-weight:700}
