@@ -231,7 +231,7 @@ input[type="date"].in{overflow:hidden}
 ol.guide,ul.guide{margin:6px 0 10px;padding-left:20px;font-size:14px;line-height:1.6;color:var(--ink)}ul.guide.tips{color:var(--ink2)}
 .yt-link{display:block;text-align:center;text-decoration:none;line-height:48px}
 .readonly [data-skipmeal]{display:none!important}
-.readonly #profileBtn,.readonly #shareBtn{display:none!important}
+.readonly #goalBtn,.readonly [data-back],.readonly [data-level],.readonly #shareBtn{display:none!important}
 
 .foot-link{text-align:center;margin:18px 0 8px}.foot-link button{font-size:12px;color:var(--sub);text-decoration:underline;background:none;padding:6px 10px}
 .readonly [data-xmeal],.readonly [data-xex]{display:none!important}

@@ -652,14 +652,19 @@ function viewSettings() {
     <button type="button" class="in daterow" id="startDateBtn" style="margin:6px 0 16px">${dateLabel(START)}<span class="chev">›</span></button>
     <div class="eyebrow">키 (BMI 계산용)</div>
     <button type="button" class="in daterow" id="heightBtn" style="margin:6px 0 16px">${HEIGHT ? HEIGHT + ' cm' : '입력해주세요'}<span class="chev">›</span></button>
+    <div class="eyebrow">목표 체중</div>
+    <button type="button" class="in daterow" id="goalBtn" style="margin:6px 0 16px">${GOAL} kg<span class="chev">›</span></button>
     <div class="eyebrow">자주 먹는 음식</div>
     <div class="favcats">${FAV_CATS.map((c) => `<button type="button" class="favcat-btn" data-favcat="${c}"><span>${c}</span><b>${favorites.filter((f) => favCat(f) === c).length}</b></button>`).join('')}</div>
     <button type="button" class="in daterow" id="favManageBtn" style="margin:8px 0 16px">전체 보기·편집 (${favorites.length})<span class="chev">›</span></button>
     <div class="eyebrow">운동 장소</div>
     <div class="seg" style="margin:6px 0 4px"><button class="${useGym ? '' : 'on'}" data-gym="0">집 (맨몸)</button><button class="${useGym ? 'on' : ''}" data-gym="1">헬스장 (머신)</button></div>
-    <p class="desc small" style="margin:0 0 16px">추천 플랜을 새로 받을 때부터 적용돼요.</p>
+    <div class="eyebrow">허리·관절</div>
+    <div class="seg" style="margin:6px 0 12px"><button class="${BACK ? '' : 'on'}" data-back="0">괜찮아요</button><button class="${BACK ? 'on' : ''}" data-back="1">불편해요 (허리 보호)</button></div>
+    <div class="eyebrow">운동 경험</div>
+    <div class="seg" style="margin:6px 0 4px">${[['new', '처음'], ['some', '가끔'], ['steady', '꾸준히']].map(([v, t]) => `<button class="${(PROFILE?.level || 'new') === v ? 'on' : ''}" data-level="${v}">${t}</button>`).join('')}</div>
+    <p class="desc small" style="margin:0 0 16px">운동 장소·허리·경험은 추천 플랜을 새로 받을 때부터 적용돼요.</p>
     <div class="eyebrow">모드</div><div style="margin:6px 0 16px">${store?.label || ''}</div>
-    <button type="button" class="in daterow" id="profileBtn" style="margin:0 0 16px">내 목표·운동 설정 (목표 ${GOAL}kg)<span class="chev">›</span></button>
     ${store?.mode === 'supabase' ? `<div class="eyebrow">내 기록 공유하기</div>
     <button type="button" class="in daterow" id="shareBtn" style="margin:6px 0 16px">${shareToken ? '공유 중 · 링크 보기' : '읽기 전용 링크 만들기'}<span class="chev">›</span></button>
     <div class="eyebrow">계정 관리</div>
@@ -1343,7 +1348,11 @@ $('#view').addEventListener('click', (e) => {
   const fc = e.target.closest('[data-favcat]');
   if (fc) return renderFavoritesView(fc.dataset.favcat);
   const gy = e.target.closest('[data-gym]');
-  if (gy) { useGym = gy.dataset.gym === '1'; try { localStorage.setItem('diet.gym', useGym ? '1' : '0'); } catch {} return render(); }
+  if (gy) { useGym = gy.dataset.gym === '1'; try { localStorage.setItem('diet.gym', useGym ? '1' : '0'); } catch {} saveProfilePatch({ place: useGym ? 'gym' : 'home' }); return render(); }
+  const bk = e.target.closest('[data-back]');
+  if (bk) { BACK = bk.dataset.back === '1'; saveProfilePatch({ back: BACK }); return render(); }
+  const lv = e.target.closest('[data-level]');
+  if (lv) { const mon = new Date(today + 'T00:00:00'); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7) - 7 * { new: 0, some: 1, steady: 2 }[lv.dataset.level]); PROGRAM_START = mon.toLocaleDateString('sv'); saveProfilePatch({ level: lv.dataset.level, program_start: PROGRAM_START }); return render(); }
   const go = e.target.closest('[data-gotab]');
   if (go) { tab = go.dataset.gotab; mealDate = today; return loadDay().then(render); }
   const md = e.target.closest('[data-mealdate]');
@@ -1524,6 +1533,24 @@ function showOnboarding(mode) {
   };
   draw();
 }
+// settings: change one profile field at a time (saved right away)
+async function saveProfilePatch(patch) {
+  PROFILE = { ...(PROFILE || {}), ...patch };
+  try { localStorage.setItem('diet.profile', JSON.stringify(PROFILE)); } catch {}
+  if (store.mode === 'supabase') { try { const { data: u } = await store.sb.auth.getUser(); await store.sb.from('users').update({ profile: PROFILE }).eq('id', u.user.id); } catch {} }
+}
+function openGoalSheet() {
+  openSheet(`<div class="sheet-head"><h2>목표 체중</h2></div><p class="desc small">현재 체중보다 낮게, 키에 맞는 건강한 체중 이상으로 정해요.</p>
+    <label class="unit-in big-in"><input id="gIn" type="number" step="0.1" inputmode="decimal" value="${GOAL}" placeholder="0"><span>kg</span></label>
+    <div class="err" id="err"></div><button class="btn" id="gSave">저장</button>`);
+  $('#gSave').onclick = async () => {
+    const g = num($('#gIn').value), w = latestWeight();
+    if (g == null || g < 30) { $('#err').textContent = '목표 체중을 입력해 주세요.'; return; }
+    if (w != null && g >= w) { $('#err').textContent = '목표 체중은 현재 체중보다 낮게 입력해 주세요.'; return; }
+    if (HEIGHT && g < 18.5 * (HEIGHT / 100) ** 2) { $('#err').textContent = `키 ${HEIGHT}cm에서 건강한 최저 체중은 약 ${(18.5 * (HEIGHT / 100) ** 2).toFixed(1)}kg이에요.`; return; }
+    GOAL = g; await saveProfilePatch({ goal: g }); closeSheet(); render();
+  };
+}
 async function saveProfileEdit(A) {
   const h = num(A.h), g = num(A.g);
   const profile = { ...(PROFILE || {}), goal: g, place: A.place, back: A.back === 'yes', level: A.level };
@@ -1604,7 +1631,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('#chPw')) return openPasswordSheet();
   if (e.target.closest('#delAcct')) return openDeleteSheet();
   if (e.target.closest('#shareBtn')) return openShareSheet();
-  if (e.target.closest('#profileBtn')) return showOnboarding('edit');
+  if (e.target.closest('#goalBtn')) return openGoalSheet();
   const yb = e.target.closest('[data-yt]');
   if (yb) { yb.outerHTML = `<div class="yt"><iframe src="https://www.youtube-nocookie.com/embed/${yb.dataset.yt}?playsinline=1&autoplay=1&rel=0&modestbranding=1" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`; return; }
   const t = e.target.closest('[data-exinfo]'); if (t) openExerciseGuide(t.dataset.exinfo);
