@@ -364,3 +364,14 @@ html,body,*{scrollbar-width:none;-ms-overflow-style:none}
 @keyframes hjump2{0%,100%{transform:translateY(0)}45%{transform:translateY(-30px)}}
 @keyframes hhop{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
 .hero2 .mascot.boing{animation:hjump2 .6s cubic-bezier(.3,.7,.4,1) 1!important}
+
+/* 음식 추가: 끼니 칩 · 담은 목록 · 큰 버튼 · 합계 바 */
+.food-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin:10px 0}
+.food-actions .btn{margin:0;height:48px;font-size:15px}
+.food-list-head{display:flex;justify-content:space-between;align-items:center;margin:12px 0 6px;font-size:14px}.food-list-head span{color:var(--blue)}
+#rowsHint{padding:14px 0;font-size:13px}
+.rows-compact .sel-type{display:none}.rows-compact .mealrow-top{grid-template-columns:1fr 26px 26px}
+.food-foot{position:sticky;bottom:calc(-1 * env(safe-area-inset-bottom));display:flex;align-items:center;gap:12px;margin:12px -4px 0;padding:10px 4px 2px;background:var(--bg)}
+.food-foot .btn{flex:1;margin:0}.food-tot{font-size:13px;color:var(--sub);white-space:nowrap}.food-tot b{font-size:20px;color:var(--ink);margin:0 2px}
+.food-actions .btn.ghost{background:var(--card,#fff);color:var(--blue);border:1.5px solid var(--blue);border-radius:14px;font-weight:700}
+.food-actions .btn.ghost:active{background:var(--blue);color:#fff}
