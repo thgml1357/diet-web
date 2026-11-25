@@ -69,7 +69,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 사용방법 안내 v3 (계획 탭 설명 추가)';
+const APP_VERSION = '2026-11-25 · 새 계정 첫 설정 수정';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -1471,6 +1471,9 @@ function showLogin(sb, mode = 'login', keep = {}) {
 
 
 /* ---------------- onboarding (first launch) ---------------- */
+// the local copy is keyed by account so one login never inherits another account's profile
+let PROFILE_UID = null;
+const profKey = () => 'diet.profile' + (PROFILE_UID ? '.' + PROFILE_UID : '');
 function applyProfile(p) {
   PROFILE = p; if (!p) return;
   if (p.goal) GOAL = Number(p.goal);
@@ -1480,12 +1483,13 @@ function applyProfile(p) {
 }
 async function loadProfile() {
   let p = null;
-  try { p = JSON.parse(lsGet('diet.profile')); } catch {}
   if (store.mode === 'supabase') {
     const { data: u } = await store.sb.auth.getUser();
+    PROFILE_UID = u.user.id;
+    try { p = JSON.parse(lsGet(profKey())); } catch {}
     const { data, error } = await store.sb.from('users').select('profile').eq('id', u.user.id).maybeSingle();
     if (!error && data?.profile) p = data.profile;
-  }
+  } else { try { p = JSON.parse(lsGet(profKey())); } catch {} }
   applyProfile(p);
 }
 function showOnboarding(mode) {
@@ -1540,7 +1544,7 @@ function showOnboarding(mode) {
 // settings: change one profile field at a time (saved right away)
 async function saveProfilePatch(patch) {
   PROFILE = { ...(PROFILE || {}), ...patch };
-  try { localStorage.setItem('diet.profile', JSON.stringify(PROFILE)); } catch {}
+  try { localStorage.setItem(profKey(), JSON.stringify(PROFILE)); } catch {}
   if (store.mode === 'supabase') { try { const { data: u } = await store.sb.auth.getUser(); await store.sb.from('users').update({ profile: PROFILE }).eq('id', u.user.id); } catch {} }
 }
 function openGoalSheet() {
@@ -1558,7 +1562,7 @@ function openGoalSheet() {
 async function saveProfileEdit(A) {
   const h = num(A.h), g = num(A.g);
   const profile = { ...(PROFILE || {}), goal: g, place: A.place, back: A.back === 'yes', level: A.level };
-  try { localStorage.setItem('diet.profile', JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); } catch {}
+  try { localStorage.setItem(profKey(), JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); } catch {}
   if (store.mode === 'supabase') {
     const { data: u } = await store.sb.auth.getUser();
     const r = await store.sb.from('users').update({ height: h, profile }).eq('id', u.user.id);
@@ -1570,7 +1574,7 @@ async function finishOnboarding(A) {
   const mon = new Date(today + 'T00:00:00'); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
   const back = { new: 0, some: 1, steady: 2 }[A.level]; mon.setDate(mon.getDate() - 7 * back);
   const profile = { goal: g, place: A.place, back: A.back === 'yes', level: A.level, program_start: mon.toLocaleDateString('sv'), tour: 'pending' };
-  try { localStorage.setItem('diet.profile', JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); localStorage.setItem('diet.startDate', today); } catch {}
+  try { localStorage.setItem(profKey(), JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); localStorage.setItem('diet.startDate', today); } catch {}
   if (store.mode === 'supabase') {
     const { data: u } = await store.sb.auth.getUser();
     const upd = (o) => store.sb.from('users').update(o).eq('id', u.user.id);
