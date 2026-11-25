@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 음식 g 표시 + 운동 검색 추가';
+const APP_VERSION = '2026-11-25 · 불꼬마·물·컨디션·주간 리포트';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -478,6 +478,107 @@ function weekBar(selected, attr, calId, hasDot) {
 }
 
 /* ---------------- views ---------------- */
+/* ---------------- 오늘 탭: mascot "불꼬마", water / check-in, streak ---------------- */
+// Original flame mascot (flat shapes, minimal face). mood: watch | friendly | joy | party | upset
+function flameSvg(mood) {
+  const white = (x, y) => `<circle cx="${x}" cy="${y}" r="9" fill="#fff"/>`;
+  const pupil = (x, y, r = 4.6) => `<circle cx="${x}" cy="${y}" r="${r}" fill="#1d1612"/>`;
+  const eyes = {
+    watch: white(45, 76) + white(75, 76) + pupil(46.5, 77) + pupil(76.5, 77),
+    friendly: white(45, 76) + white(75, 76) + pupil(45, 76) + pupil(75, 76),
+    joy: white(45, 76) + white(75, 76) + pupil(44, 74.5, 5.2) + pupil(74, 74.5, 5.2) + '<circle cx="42.5" cy="72.5" r="1.6" fill="#fff"/><circle cx="72.5" cy="72.5" r="1.6" fill="#fff"/>',
+    party: '<path d="M35 80 q10 -14 20 0 M65 80 q10 -14 20 0" fill="none" stroke="#1d1612" stroke-width="5" stroke-linecap="round"/>',
+    upset: white(45, 78) + white(75, 78) + pupil(45, 81) + pupil(75, 81) + '<path d="M33 65 l22 7 M87 65 l-22 7" stroke="#1d1612" stroke-width="4" stroke-linecap="round"/>',
+  }[mood];
+  const mouth = {
+    watch: '<circle cx="60" cy="92" r="2.4" fill="#1d1612"/>',
+    friendly: '<path d="M52 91 q8 7 16 0" fill="none" stroke="#1d1612" stroke-width="3.6" stroke-linecap="round"/>',
+    joy: '<path d="M50 88 q10 18 20 0z" fill="#1d1612"/><path d="M55 97 q5 4 10 0" fill="#ff8a8a"/>',
+    party: '<path d="M48 88 q12 24 24 0z" fill="#1d1612"/><path d="M54 99 q6 6 12 0" fill="#ff8a8a"/>',
+    upset: '<path d="M52 98 q8 -8 16 0" fill="none" stroke="#1d1612" stroke-width="3.6" stroke-linecap="round"/>',
+  }[mood];
+  const cheeks = mood === 'party' || mood === 'joy' ? '<ellipse cx="32" cy="92" rx="6" ry="4" fill="#ffb4a8" opacity=".8"/><ellipse cx="88" cy="92" rx="6" ry="4" fill="#ffb4a8" opacity=".8"/>' : '';
+  return `<svg viewBox="0 0 120 130" width="140" height="150" aria-hidden="true"><defs><linearGradient id="flg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ff8a3d"/><stop offset="1" stop-color="#f0432c"/></linearGradient></defs>
+    <g class="flame-body"><path d="M60 6 C62 18 68 24 74 32 C77 28 78 22 77 16 C86 26 92 38 92 50 C100 66 98 88 86 102 C78 112 69 118 60 118 C50 118 41 112 33 102 C21 88 20 66 30 52 C33 46 38 42 42 36 C45 32 46 26 45 20 C52 26 54 34 54 42 C58 34 60 20 60 6 Z" fill="url(#flg)"/>
+    <ellipse cx="60" cy="100" rx="24" ry="13" fill="#ffc86b" opacity=".5"/>${cheeks}${eyes}${mouth}</g></svg>`;
+}
+function streakDays() {
+  const has = (d) => { const r = cache[d]; return !!(r && ((r.meals || []).length || (r.exercises || []).length || r.weight != null)); };
+  let d = today; if (!has(d)) d = addDays(d, -1);
+  let n = 0; while (has(d)) { n++; d = addDays(d, -1); }
+  return n;
+}
+function homeHero(items, doneN, ateKcal, target) {
+  const handled = items.length > 0 && doneN === items.length;
+  const allGood = handled && items.every((x) => ['done', 'swap'].includes(itemStatus(x)));
+  const over = ateKcal > target + 150, pct = items.length ? doneN / items.length : 0, streak = streakDays();
+  let mood, t1, t2, coach;
+  if (!items.length) { mood = 'watch'; t1 = '오늘 플랜이 아직 없어요'; t2 = '아래에서 추천 플랜을 받아 보세요'; coach = '피티쌤: 플랜이 있어야 불꼬마도 같이 달릴 수 있어요!'; }
+  else if (allGood && !over) { mood = 'party'; t1 = '오늘 플랜을 모두 해냈어요!'; t2 = '식단도 운동도 완벽한 하루예요'; coach = '피티쌤: 소희 회원님, 오늘 정말 멋졌어요. 내일도 이 기세로 가요!'; }
+  else if (over) { mood = 'upset'; t1 = '오늘은 조금 많이 먹었어요'; t2 = '괜찮아요, 내일 가볍게 맞춰 드릴게요'; coach = '피티쌤: 하루 이틀은 괜찮아요. 오늘은 걷기 한 번 더 어때요?'; }
+  else if (handled) { mood = 'friendly'; t1 = '오늘도 수고했어요'; t2 = '못 한 건 내일 가볍게 이어가요'; coach = '피티쌤: 꾸준함이 제일 강력한 무기예요.'; }
+  else if (doneN === 0) { mood = 'watch'; t1 = '오늘도 천천히 시작해 볼까요?'; t2 = `할 일 0/${items.length} · 체크 탭에서 첫 동그라미부터!`; coach = '피티쌤: 첫 동그라미가 제일 어려워요. 가볍게 하나만!'; }
+  else if (pct < 0.5) { mood = 'friendly'; t1 = '좋아요, 시작이 반이에요!'; t2 = `할 일 ${doneN}/${items.length}`; coach = '피티쌤: 이 페이스 그대로 가요.'; }
+  else { mood = 'joy'; t1 = '조금만 더 힘내요!'; t2 = `남은 할 일 ${items.length - doneN}개`; coach = '피티쌤: 절반 넘게 해냈어요. 마무리만 해요!'; }
+  const left = target - ateKcal;
+  if (mood === 'party' && !lsGet('diet.fx.' + today)) { try { localStorage.setItem('diet.fx.' + today, '1'); } catch {} setTimeout(burstConfetti, 400); }
+  return `<div class="card hero2 scene" data-m="${mood}">
+    <div class="confetti" id="confetti" aria-hidden="true"></div>
+    <div class="stage"><div class="glow"></div>
+      <svg class="ring" viewBox="0 0 200 200" aria-hidden="true"><circle class="bg" cx="100" cy="100" r="90"/><circle class="fg" cx="100" cy="100" r="90" style="stroke-dashoffset:${565 * (1 - pct)}"/></svg>
+      <i class="sp a"></i><i class="sp b"></i><i class="sp c"></i><div class="shadow"></div>
+      <button type="button" class="mascot" id="mascot" aria-label="불꼬마">${flameSvg(mood)}</button></div>
+    <p class="msg"><b>${t1}</b><span>${t2}</span></p>
+    <div class="chips"><span class="chip">${left >= 0 ? '남은' : '초과'} <b>${Math.abs(Math.round(left)).toLocaleString()} kcal</b></span>${streak > 0 ? `<span class="chip">연속 <b>${streak}일</b></span>` : ''}${items.length ? `<span class="chip">할 일 <b>${doneN}/${items.length}</b></span>` : ''}</div>
+    <div class="pt">${coach}</div></div>`;
+}
+const confettiColors = ['#f0432c', '#ff8a3d', '#ffc86b', '#3182f6', '#12b886', '#ff6b81'];
+function burstConfetti() {
+  const box = document.getElementById('confetti'); if (!box || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  box.innerHTML = '';
+  for (let i = 0; i < 46; i++) {
+    const c = document.createElement('i'); c.style.left = Math.random() * 100 + '%'; c.style.background = confettiColors[i % confettiColors.length];
+    c.style.setProperty('--dx', Math.random() * 80 - 40 + 'px'); c.style.setProperty('--rot', Math.random() * 720 - 360 + 'deg');
+    c.style.animationDuration = 1.6 + Math.random() * 1.4 + 's'; c.style.animationDelay = Math.random() * 0.5 + 's'; box.appendChild(c);
+  }
+}
+// water cups + mood + back condition, saved on the day's record
+const WATER_GOAL = 8;
+function checkinCard() {
+  const ck = cache[today]?.checkin || {}, cups = Number(ck.water) || 0;
+  const seg = (key, opts) => `<div class="seg ck-seg">${opts.map(([v, t]) => `<button type="button" ${READONLY ? 'disabled' : ''} class="${ck[key] === v ? 'on' : ''}" data-ck="${key}:${v}">${t}</button>`).join('')}</div>`;
+  return `<div class="card"><div class="card-title">물 · 컨디션<span class="sub">물 ${cups}/${WATER_GOAL}잔 (${cups * 250}ml)</span></div>
+    <div class="water">${Array.from({ length: WATER_GOAL }, (_, i) => `<button type="button" ${READONLY ? 'disabled' : ''} class="cup${i < cups ? ' on' : ''}" data-cup="${i + 1}" aria-label="${i + 1}잔"><svg viewBox="0 0 24 24"><path d="M12 3c3.5 4.2 6 7.3 6 10.6A6 6 0 0 1 6 13.6C6 10.3 8.5 7.2 12 3Z"/></svg></button>`).join('')}</div>
+    <div class="ck-row"><span>컨디션</span>${seg('mood', [['good', '좋음'], ['ok', '보통'], ['tired', '피곤']])}</div>
+    <div class="ck-row"><span>허리</span>${seg('back', [['fine', '괜찮음'], ['stiff', '뻐근'], ['pain', '아픔']])}</div>
+    ${ck.back === 'pain' ? '<p class="desc small" style="margin:8px 0 0;color:var(--up)">허리가 아프면 오늘은 스트레칭과 가벼운 걷기만 해요. 통증이 계속되면 병원에 가요.</p>' : ''}</div>`;
+}
+async function saveCheckin(patch) {
+  const r = cache[today] || {}, checkin = { ...(r.checkin || {}), ...patch };
+  const rec = { date: today, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: r.calories_burned ?? null, meals: r.meals || [], exercises: r.exercises || [], checkin };
+  try { await store.save(rec); cache[today] = { ...r, ...rec }; render(); } catch (e) { alert(authMsg(e)); }
+}
+function recentFoods() {
+  const m = {};
+  recs().forEach((r) => (r.meals || []).forEach((f) => { const n = f.planned || f.name; if (!n || !f.kcal) return; const o = m[n] = m[n] || { n, c: 0, d: '', f }; o.c++; if (r.date >= o.d) { o.d = r.date; o.f = f; } }));
+  return Object.values(m).sort((a, b) => b.d.localeCompare(a.d) || b.c - a.c).slice(0, 8).map((o) => ({ name: o.n, grams: o.f.grams || 0, kcal: o.f.kcal, cat: '식사' }));
+}
+function weekReport() {
+  const days = (from, n) => Array.from({ length: n }, (_, i) => cache[addDays(from, i)]).filter(Boolean);
+  const cur = days(addDays(today, -6), 7), prev = days(addDays(today, -13), 7);
+  const avg = (rs, f) => { const v = rs.map(f).filter((x) => x != null && x !== '' && !Number.isNaN(Number(x))).map(Number); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
+  const wC = avg(cur, (r) => r.weight), wP = avg(prev, (r) => r.weight);
+  const kc = avg(cur, (r) => r.calories_consumed), st = avg(cur, (r) => r.steps), wt = avg(cur, (r) => r.checkin?.water);
+  const exDays = cur.filter((r) => (r.exercises || []).length).length, exMin = cur.reduce((a, r) => a + (r.exercises || []).reduce((b, e) => b + (Number(e.duration) || 0), 0), 0);
+  if (!cur.length) return '';
+  const row = (k, v) => `<div class="sum-row"><span class="sum-k" style="width:auto;flex:1">${k}</span><b>${v}</b></div>`;
+  return `<div class="card"><div class="card-title">최근 7일 리포트<span class="sub">${dateLabel(addDays(today, -6))} ~ 오늘</span></div>
+    ${row('평균 체중', wC != null ? `${wC.toFixed(2)}kg ${wP != null ? `<small style="color:var(--${wC - wP <= 0 ? 'blue' : 'up'})">${wC - wP > 0 ? '+' : ''}${(wC - wP).toFixed(2)}</small>` : ''}` : '–')}
+    ${row('평균 섭취', kc != null ? `${Math.round(kc).toLocaleString()} kcal` : '–')}
+    ${row('평균 걸음', st != null ? `${Math.round(st).toLocaleString()} 걸음` : '–')}
+    ${row('운동한 날', `${exDays}일${exMin ? ` · ${exMin}분` : ''}`)}
+    ${row('평균 물', wt != null ? `${wt.toFixed(1)}잔` : '–')}</div>`;
+}
 function viewHome() {
   const all = recs().filter((r) => r.weight != null);
   const last = all[all.length - 1]; // most recent weight ever, regardless of start date
@@ -534,10 +635,11 @@ function viewHome() {
     <div class="big">${last ? Number(last.weight).toFixed(2) + ' kg' : '체중을 기록해주세요'}</div>
     ${first && last && first !== last ? `<div class="delta ${diff <= 0 ? 'down' : 'up'}">시작 대비 ${diff > 0 ? '+' : ''}${diff.toFixed(2)} kg</div>` : ''}
     ${last ? `<div class="delta">목표 ${GOAL}kg까지 ${Math.max(0, Number(last.weight) - GOAL).toFixed(2)} kg</div>` : ''}
+    ${first && last && first.weight > GOAL ? (() => { const gp = Math.max(0, Math.min(100, ((first.weight - last.weight) / (first.weight - GOAL)) * 100)); return `<div class="goalbar" title="시작 ${first.weight}kg → 목표 ${GOAL}kg"><i style="width:${gp}%"></i></div><div class="goalcap"><span>${Number(first.weight).toFixed(1)}</span><b>${gp.toFixed(0)}%</b><span>${GOAL}</span></div>`; })() : ''}
     <button class="pill-btn" id="quickWeight">${t?.weight != null ? '오늘 체중 수정' : '오늘 체중 입력'}</button>
   </div>
-  ${items.length ? `<div class="card"><div class="card-title">오늘 할 일<span class="sub">${doneN}/${items.length} 완료</span></div><div class="bar"><i style="width:${pct}%"></i></div>
-    <p class="desc">${pct === 100 ? '오늘 플랜을 모두 해냈어요! 🎉' : (READONLY ? '체크 탭에서 항목별로 볼 수 있어요.' : '체크 탭에서 체크하면 기록에 자동으로 반영돼요.')}</p></div>` : ''}
+  ${homeHero(items, doneN, ateKcal, target)}
+  ${checkinCard()}
   <div class="card">
     <div class="cal-head"><button id="prev">‹</button><b>${y}년 ${m + 1}월</b><button id="next">›</button></div>
     <div class="dow">${'일월화수목금토'.split('').map((d) => `<span>${d}</span>`).join('')}</div>
@@ -650,7 +752,7 @@ function viewStats() {
   recs().forEach((r) => (r.exercises || []).forEach((e) => { const n = e.planned || e.name; if (Number(e.weight) > 0) (lifts[n] = lifts[n] || []).push({ d: r.date, w: Number(e.weight) }); }));
   const liftRows = Object.entries(lifts).map(([n, l]) => ({ n, first: l[0].w, last: l[l.length - 1].w, cnt: l.length, d: l[l.length - 1].d })).sort((a, b) => b.d.localeCompare(a.d)).slice(0, 6);
   const liftCard = liftRows.length ? `<div class="card"><div class="card-title">운동 무게 변화<span class="sub">최근 순</span></div>${liftRows.map((x) => `<div class="sum-row"><span class="sum-k" style="width:auto;flex:1">${esc(x.n)}</span><b>${x.first}${x.cnt > 1 ? ` → ${x.last}` : ''}kg ${x.last > x.first ? `<small style="color:var(--blue)">▲${+(x.last - x.first).toFixed(1)}</small>` : ''}</b></div>`).join('')}</div>` : '';
-  return `<div class="card"><div class="eyebrow">시작일(${dateLabel(START)}) 이후 · ${meta[metric][1]}</div><div class="seg" style="margin-top:12px">${seg}</div>${body}</div>${liftCard}${ibCard}`;
+  return `${weekReport()}<div class="card"><div class="eyebrow">시작일(${dateLabel(START)}) 이후 · ${meta[metric][1]}</div><div class="seg" style="margin-top:12px">${seg}</div>${body}</div>${liftCard}${ibCard}`;
 }
 
 function startOfWeek(dateStr) { const d = new Date(dateStr + 'T00:00:00'); d.setDate(d.getDate() - d.getDay()); return d; }
@@ -1301,12 +1403,13 @@ function wireFoodSearch(root, onPick) {
   const inp = root.querySelector('.fs-in'), res = root.querySelector('.fs-res'); let mult = 1, ALL = allFoods();
   const draw = () => {
     ALL = allFoods();
-    const q = foodNorm(inp.value); if (!q) { res.innerHTML = ''; return; }
+    const q = foodNorm(inp.value);
+    if (!q) { ALL = recentFoods(); res.innerHTML = ALL.length ? `<div class="desc small" style="margin:0 0 6px">최근 먹은 음식</div>` + ALL.map((f, i) => `<button type="button" class="favchip" data-i="${i}">${esc(f.name)} · ${f.grams ? Math.round(f.grams * mult) + 'g · ' : ''}${Math.round(f.kcal * mult)}kcal</button>`).join('') : ''; return; }
     const hit = ALL.map((f, i) => [f, i, foodNorm(f.name).indexOf(q)]).filter((x) => x[2] >= 0).sort((a, b) => a[2] - b[2]).slice(0, 10);
     res.innerHTML = hit.length ? hit.map(([f, i]) => `<button type="button" class="favchip" data-i="${i}">${esc(f.name)} · ${f.grams ? Math.round(f.grams * mult) + 'g · ' : ''}${Math.round(f.kcal * mult)}kcal</button>`).join('')
       : '<div class="empty" style="padding:6px 0">목록에 없어요. 아래 「목록에 없는 음식 추가하기」로 추가하거나 직접 적어주세요.</div>';
   };
-  inp.oninput = draw;
+  inp.oninput = draw; draw();
   root.querySelector('.fs-mult').onclick = (e) => {
     const b = e.target.closest('button'); if (!b) return; mult = Number(b.dataset.m);
     root.querySelectorAll('.fs-mult button').forEach((x) => x.classList.toggle('on', x === b)); draw();
@@ -1993,6 +2096,9 @@ function openExerciseGuide(name) {
     <a class="btn ghost yt-link" href="${search}" target="_blank" rel="noopener">${g?.yt ? '▶ YouTube에서 열기 / 다른 영상 찾기' : '▶ YouTube에서 영상 찾아보기'}</a>`);
 }
 document.addEventListener('click', async (e) => {
+  const cup = e.target.closest('[data-cup]'); if (cup && !READONLY) { const n = Number(cup.dataset.cup), cur = Number(cache[today]?.checkin?.water) || 0; return saveCheckin({ water: n === cur ? n - 1 : n }); }
+  const ckb = e.target.closest('[data-ck]'); if (ckb && !READONLY) { const [k, v] = ckb.dataset.ck.split(':'); return saveCheckin({ [k]: (cache[today]?.checkin || {})[k] === v ? null : v }); }
+  const mas = e.target.closest('#mascot'); if (mas) { mas.classList.remove('boing'); void mas.offsetWidth; mas.classList.add('boing'); if (mas.closest('[data-m=party]')) burstConfetti(); return; }
   const xm = e.target.closest('[data-xmeal]'); if (xm) return openExtraMealSheet(xm.dataset.xmeal);
   const xe = e.target.closest('[data-xex]'); if (xe) return openExtraExSheet(xe.dataset.xex);
   if (e.target.closest('#chPw')) return openPasswordSheet();
