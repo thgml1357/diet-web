@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 운동 편집 접기·순서 변경';
+const APP_VERSION = '2026-11-25 · 스크롤바 숨김';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');

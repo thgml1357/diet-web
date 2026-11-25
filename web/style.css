@@ -298,3 +298,7 @@ body.sheet-open{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 .exrow2{display:grid;grid-template-columns:96px 1fr;gap:8px;margin-top:8px;align-items:start}
 .exrow2 .f-reps{height:46px;font-size:14px}.exrow2 .f-notes{min-height:76px;padding:10px 12px;font-size:14px;resize:none;line-height:1.5;height:auto}
 .exrow.dragging{opacity:.9;box-shadow:0 6px 20px rgba(0,0,0,.18);position:relative;z-index:2}
+
+/* no visible scrollbars anywhere (scrolling still works) */
+html,body,*{scrollbar-width:none;-ms-overflow-style:none}
+*::-webkit-scrollbar{display:none;width:0;height:0}
