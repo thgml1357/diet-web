@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 키보드 입력 시 바텀시트 확장';
+const APP_VERSION = '2026-11-25 · 추천 플랜: 기록한 항목 보존';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -261,10 +261,22 @@ function exercisesFor(date) {
     : cardioDay(day, gym);
   return list.map((e) => ({ ...e, done: false }));
 }
+// Re-generating never touches what the user already checked / swapped / skipped:
+// meal types (and the day's workout) that have any such item are kept as they are; only the rest is replaced.
 async function generatePlan(date) {
   const target = kcalTarget(latestWeight());
-  await store.meals.save(date, mealsFor(date, target));
-  await store.exercises.save(date, exercisesFor(date));
+  const oldM = await store.meals.get(date), oldE = await store.exercises.get(date);
+  const lockedTypes = new Set(oldM.filter((m) => itemStatus(m)).map((m) => m.type));
+  const keptM = oldM.filter((m) => lockedTypes.has(m.type));
+  let fresh = mealsFor(date, target).filter((m) => !lockedTypes.has(m.type));
+  if (keptM.length && fresh.length) { // fit the new meals into what is left of the day's calorie target
+    const left = target - keptM.reduce((a, m) => a + (m.kcal || 0), 0), sum = fresh.reduce((a, m) => a + m.kcal, 0);
+    const f = Math.min(1.5, Math.max(0.5, left / sum));
+    fresh = fresh.map((m) => ({ ...m, grams: Math.round((m.grams * f) / 5) * 5, kcal: Math.round(m.kcal * f) }));
+  }
+  const meals = [...keptM, ...fresh].sort((a, b) => MEAL_TYPES.indexOf(a.type) - MEAL_TYPES.indexOf(b.type));
+  await store.meals.save(date, meals);
+  await store.exercises.save(date, oldE.some((x) => itemStatus(x)) ? oldE : exercisesFor(date));
 }
 
 /* plan item status: '' (not yet) | done (as planned) | swap (ate/did something else) | skip.
@@ -1496,7 +1508,7 @@ $('#view').addEventListener('click', (e) => {
   else if (t.dataset.metric) { metric = t.dataset.metric; render(); }
   else if (t.dataset.plan === 'meals') editPlanMeals();
   else if (t.dataset.plan === 'exercises') editPlanExercises();
-  else if (t.dataset.plan === 'gen') { if ((planData.meals.length || planData.exercises.length) && !confirm('기존 계획을 추천 플랜으로 바꿀까요?')) return; generatePlan(planDate).then(refreshPlan).then(loadToday); }
+  else if (t.dataset.plan === 'gen') { if ((planData.meals.length || planData.exercises.length) && !confirm('체크하거나 기록한 항목은 그대로 두고, 나머지만 추천 플랜으로 바꿀까요?')) return; generatePlan(planDate).then(refreshPlan).then(loadToday); }
   else if (t.dataset.plan === 'genweek') {
     if (!confirm('오늘부터 7일 계획을 추천 플랜으로 채울까요? (이미 있는 날은 건너뛰어요)')) return;
     (async () => { for (let i = 0; i < 7; i++) { const d = addDays(today, i); if (!(await store.meals.get(d)).length) await generatePlan(d); } await loadToday(); await refreshPlan(); })();
@@ -1886,7 +1898,7 @@ const TOUR = [
   { tab: 'record', sel: TOUR_TAB('stats'), tap: true, title: '통계 탭', text: '체중과 섭취·소모 칼로리 그래프, 인바디 변화를 봐요. 눌러보세요!' },
   { tab: 'stats', sel: TOUR_TAB('plan'), tap: true, title: '계획 탭', text: '앞으로의 식단·운동 계획과 체중 추이 분석이 있어요. 눌러보세요!' },
   { tab: 'plan', sel: '#planDateBtn', title: '날짜 고르기', text: '계획을 볼 날짜를 골라요. 눌러서 다른 날의 식단과 운동 계획으로 이동할 수 있어요.' },
-  { tab: 'plan', sel: '[data-plan="gen"]', title: '추천 플랜으로 채우기', text: '고른 날의 식단과 운동을 추천 플랜으로 새로 채워요. 내 체중과 감량 속도에 맞춰 칼로리가 정해져요. 이미 있던 그날 계획은 새 추천으로 바뀌어요.' },
+  { tab: 'plan', sel: '[data-plan="gen"]', title: '추천 플랜으로 채우기', text: '고른 날의 식단과 운동을 추천 플랜으로 새로 채워요. 내 체중과 감량 속도에 맞춰 칼로리가 정해져요. 체크하거나 기록한 항목은 그대로 두고, 나머지만 새 추천으로 바뀌어요.' },
   { tab: 'plan', sel: '[data-plan="genweek"]', title: '앞으로 7일 한 번에', text: '오늘부터 7일치 계획을 한 번에 채워요. 이미 계획이 있는 날은 건너뛰니까 걱정 안 해도 돼요.' },
   { tab: 'plan', sel: '[data-plan="meals"]', title: '식단 편집', text: '추천된 식단을 내 입맛에 맞게 바꿔요. 음식을 검색해서 추가하거나 지울 수 있어요.' },
   { tab: 'plan', sel: '[data-plan="exercises"]', title: '운동 편집', text: '운동 계획도 직접 바꿀 수 있어요. 시간, 세트, 횟수를 고치거나 다른 운동으로 바꿔요.' },
