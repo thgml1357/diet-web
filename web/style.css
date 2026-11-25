@@ -138,7 +138,8 @@ input[type="date"].in{overflow:hidden}
 .check-body{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
 .check-name{font-size:16px;font-weight:500}
 .check small{color:var(--sub);font-size:13px}
-.check.st-done .check-name,.check.st-swap .check-name,.check.st-skip .check-name{color:var(--sub);text-decoration:line-through}
+.check.st-skip .check-name{color:var(--sub);text-decoration:line-through}
+.check.st-done .check-name,.check.st-swap .check-name{color:var(--ink);text-decoration:none}
 .check .kcal,.check .li-right b{font-size:14px;color:var(--ink2);font-weight:600;white-space:nowrap}
 .check .li-right .g{color:var(--sub);font-size:12px}
 .tag{display:inline-block;font-size:11px;font-weight:700;border-radius:6px;padding:2px 6px;margin-right:6px;vertical-align:2px}
