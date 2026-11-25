@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 체크 탭 + 음식 추가·승인';
+const APP_VERSION = '2026-11-25 · 체크 탭에서 걸음·소모 입력';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -608,6 +608,13 @@ function viewRecord() {
   <div class="card"><div class="eyebrow">운동</div>${(r.exercises || []).map((e) => exRowView(e)).join('') || '<div class="empty">기록된 운동이 없어요</div>'}</div>`;
 }
 
+// compact steps / watch-calories row for the 체크 tab (saved on change, no extra screens)
+function activityRow(date) {
+  const r = cache[date] || {};
+  if (READONLY) return `<div class="act-row"><span>걸음 <b>${r.steps != null ? Number(r.steps).toLocaleString() : '–'}</b></span><span>소모 <b>${r.calories_burned != null ? Number(r.calories_burned).toLocaleString() : '–'}</b> kcal</span></div>`;
+  return `<div class="act-row" data-actdate="${date}"><label>걸음<input class="act-in" data-f="steps" type="number" inputmode="numeric" placeholder="0" value="${r.steps ?? ''}"></label>
+    <label>소모<input class="act-in" data-f="calories_burned" type="number" inputmode="numeric" placeholder="0" value="${r.calories_burned ?? ''}"><span>kcal</span></label><i class="act-ok" aria-live="polite"></i></div>`;
+}
 function viewMeals() {
   const r = cache[mealDate] || {};
   const planned = dayPlan.meals.reduce((a, m) => a + (m.kcal || 0), 0);
@@ -641,7 +648,7 @@ function viewMeals() {
     <button class="btn" id="genDay">추천 플랜 받기</button></div>
     ${extra.length ? `<div class="card"><div class="card-title">기록한 음식</div>${xMeals}</div>` : ''}
     ${exExtra.length ? `<div class="card"><div class="card-title">기록한 운동</div>${xEx}</div>` : ''}
-    <div class="card"><button class="link-btn" style="padding:0" data-fooddate="${mealDate}">+ 음식 기록하기</button><button class="link-btn" style="padding:14px 0 0;display:block" data-exdate="${mealDate}">+ 운동 기록하기</button></div>`;
+    <div class="card">${activityRow(mealDate)}<button class="link-btn" style="padding:0" data-fooddate="${mealDate}">+ 음식 기록하기</button><button class="link-btn" style="padding:14px 0 0;display:block" data-exdate="${mealDate}">+ 운동 기록하기</button></div>`;
   return `${bar}
   <div class="card"><div class="card-title">${dateLabel(mealDate)} 식단<span class="sub">${ate.toLocaleString()} / ${planned.toLocaleString()} kcal</span></div>
     <p class="desc small">동그라미: 계획대로 먹음 · ⋯: 다른 걸 먹었거나 안 먹었을 때</p>${groups}
@@ -649,6 +656,7 @@ function viewMeals() {
     <button class="link-btn" data-fooddate="${mealDate}">+ 계획에 없던 음식 기록하기</button></div>
   <div class="card"><div class="card-title">운동<span class="sub">${['일', '월', '화', '수', '목', '금', '토'][new Date(mealDate + 'T00:00:00').getDay()]}요일 루틴</span></div>
     <p class="desc small">동그라미: 계획대로 함 · ⋯: 다른 운동을 했거나 못 했을 때</p>
+    ${activityRow(mealDate)}
     ${dayPlan.exercises.map((e, i) => checkRow('exercises', i, e)).join('') || '<div class="empty">쉬는 날이에요</div>'}
     ${exExtraHtml}
     <button class="link-btn" data-exdate="${mealDate}">+ 계획에 없던 운동 기록하기</button></div>`;
@@ -1481,6 +1489,14 @@ $('#view').addEventListener('click', (e) => {
     if (!confirm('오늘부터 7일 계획을 추천 플랜으로 채울까요? (이미 있는 날은 건너뛰어요)')) return;
     (async () => { for (let i = 0; i < 7; i++) { const d = addDays(today, i); if (!(await store.meals.get(d)).length) await generatePlan(d); } await loadToday(); await refreshPlan(); })();
   }
+});
+document.addEventListener('change', async (e) => {
+  const inp = e.target.closest?.('.act-in'); if (!inp) return;
+  const row = inp.closest('[data-actdate]'), date = row.dataset.actdate, r = cache[date] || {}, ok = row.querySelector('.act-ok');
+  const val = (f) => num(row.querySelector(`[data-f="${f}"]`).value);
+  const rec = { date, weight: r.weight ?? null, steps: val('steps'), calories_consumed: r.calories_consumed ?? null, calories_burned: val('calories_burned'), meals: r.meals || [], exercises: r.exercises || [] };
+  try { await store.save(rec); cache[date] = { ...r, ...rec }; ok.textContent = '저장됨 ✓'; ok.className = 'act-ok on'; setTimeout(() => { ok.textContent = ''; }, 1500); }
+  catch (er) { ok.textContent = authMsg(er); ok.className = 'act-ok err'; }
 });
 document.querySelector('.tabs').addEventListener('click', async (e) => {
   const b = e.target.closest('button'); if (!b) return;

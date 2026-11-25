@@ -272,3 +272,10 @@ body.sheet-open{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 .fs-addlink{display:block;margin:6px 0 2px;font-size:13px;font-weight:600;color:var(--blue);padding:6px 0}
 .fs-add{margin:6px 0 10px;padding:12px;border-radius:14px;background:#fff}.fa-err{margin-top:6px}
 .readonly .fs-addlink,.readonly .fs-add{display:none!important}
+
+.act-row{display:flex;align-items:center;gap:8px;margin:2px 0 8px;font-size:13px;color:var(--sub);flex-wrap:nowrap}
+.act-row label{display:flex;align-items:center;gap:6px;flex:1;min-width:0;background:#f2f4f6;border-radius:12px;padding:0 10px;height:38px;font-weight:600}
+.act-row input{flex:1;min-width:0;width:100%;border:0;background:transparent;text-align:right;font-size:15px;font-weight:700;color:var(--ink);padding:0}
+.act-row label span{font-weight:500;font-size:12px}
+.act-ok{font-style:normal;font-size:12px;min-width:0;white-space:nowrap}.act-ok.on{color:var(--blue)}.act-ok.err{color:var(--up)}
+.act-row b{color:var(--ink)}
