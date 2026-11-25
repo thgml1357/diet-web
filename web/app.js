@@ -69,7 +69,9 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const READONLY = !!window.DIET_SHARE;
+let READONLY = !!window.DIET_SHARE;
+let shareToken = null;
+const SHARE_PARAM = new URLSearchParams(location.search).get('share');
 function shareStore(D) {
   const recs = Object.fromEntries((D.records || []).map((r) => [r.date, r]));
   const deny = async () => { throw new Error('공유 페이지에서는 기록할 수 없어요'); };
@@ -94,12 +96,13 @@ const EPOCH = '2000-01-01'; // always load full history; START only affects the 
 async function loadAll() {
   const rows = await store.range(EPOCH, '9999-12-31');
   cache = Object.fromEntries(rows.map((r) => [r.date, r]));
+  TREND = computeTrend();
 }
 const recs = () => Object.values(cache).sort((a, b) => a.date.localeCompare(b.date));
 const kcal = (n) => (n == null ? '–' : Number(n).toLocaleString() + ' kcal');
 
 /* ---------------- meals: typed + grouped ---------------- */
-const MEAL_TYPES = ['아침', '점심', '저녁', '간식'];
+const MEAL_TYPES = ['아침', '점심', '저녁', '간식', '야식'];
 function groupMeals(meals) {
   const g = {}; MEAL_TYPES.forEach((t) => (g[t] = [])); g['기타'] = [];
   (meals || []).forEach((m) => { const t = MEAL_TYPES.includes(m.type) ? m.type : '기타'; g[t].push(m); });
@@ -137,15 +140,32 @@ function exDetail(e) {
 function exRowView(e) {
   const cat = e.category ? `<span class="tag t-${EX_CATS.indexOf(e.category)}">${esc(e.category)}</span>` : '';
   const kcalTxt = e.kcal != null ? `<span class="g">${e.kcal}kcal</span>` : '';
-  return `<div class="li"><div class="li-left"><div>${cat}<span class="li-name">${esc(e.name)}</span>${e.notes ? `<small>${esc(e.notes)}</small>` : ''}</div></div><div class="li-right"><b>${exDetail(e) || '–'}</b>${kcalTxt}</div></div>`;
+  return `<div class="li exinfo" data-exinfo="${esc(e.name)}"><div class="li-left"><div>${cat}<span class="li-name">${esc(e.name)}</span><span class="info-i">ⓘ</span>${e.notes ? `<small>${esc(e.notes)}</small>` : ''}</div></div><div class="li-right"><b>${exDetail(e) || '–'}</b>${kcalTxt}</div></div>`;
 }
 
 /* ---------------- program: safe auto-plan ---------------- */
 // Target: maintenance (~30 kcal/kg) minus 500 → ~0.5 kg/week. Never below 1,300 kcal.
 const KCAL_FLOOR = 1300;
+let TREND = { status: 'few', kcalAdj: 0, exAdd: 0 };
+// Weight-trend feedback: regression over the last 21 days (≥4 weigh-ins spanning ≥10 days) → weekly loss rate.
+function computeTrend() {
+  const t0 = addDays(today, -21) > START ? addDays(today, -21) : START; // never look before the diet start date
+  const pts = recs().filter((r) => r.weight != null && r.date >= t0 && r.date <= today).map((r) => [(new Date(r.date) - new Date(t0)) / 86400000, Number(r.weight)]);
+  const n = pts.length, span = n ? pts[n - 1][0] - pts[0][0] : 0;
+  if (n < 4 || span < 10) return { status: 'few', n, span, kcalAdj: 0, exAdd: 0 };
+  const mx = pts.reduce((a, p) => a + p[0], 0) / n, my = pts.reduce((a, p) => a + p[1], 0) / n;
+  const slope = pts.reduce((a, p) => a + (p[0] - mx) * (p[1] - my), 0) / pts.reduce((a, p) => a + (p[0] - mx) ** 2, 0);
+  const w = pts[n - 1][1], loss = -slope * 7, fastMax = w * 0.01;
+  const raw = Math.round((w * 30 - 500) / 10) * 10, room = Math.max(0, raw - KCAL_FLOOR);
+  const base = { n, span, loss, w, fastMax };
+  if (loss < 0.15) return { ...base, status: 'stall', kcalAdj: -Math.min(100, room), exAdd: 10, atFloor: room === 0 };
+  if (loss < 0.3) return { ...base, status: 'slow', kcalAdj: 0, exAdd: 5 };
+  if (loss > fastMax) return { ...base, status: 'fast', kcalAdj: 100, exAdd: 0 };
+  return { ...base, status: 'good', kcalAdj: 0, exAdd: 0 };
+}
 function kcalTarget(weight) {
   const w = weight || 68;
-  return Math.min(1800, Math.max(KCAL_FLOOR, Math.round((w * 30 - 500) / 10) * 10));
+  return Math.min(1800, Math.max(KCAL_FLOOR, Math.round((w * 30 - 500 + (TREND.kcalAdj || 0)) / 10) * 10));
 }
 function latestWeight() { const w = recs().filter((r) => r.weight != null); return w.length ? Number(w[w.length - 1].weight) : null; }
 const MENUS = [
@@ -181,8 +201,7 @@ function mealsFor(date, target) {
    - Back: McGill "big 3" (curl-up, side plank, bird dog; 6-4-2 reps, ~8 s holds), no loaded spinal flexion.
    Week: Mon/Fri full-body A, Wed full-body B (strength never on consecutive days), Tue/Thu/Sat cardio, Sun easy recovery.
    Home = bodyweight only. Gym = machines, switched on in 설정. */
-let PROGRAM_START = '2026-11-23'; // Monday of program week 1 (progression counts from here). Per user: users.program_start, filled on first login.
-const mondayOf = (dateStr) => { const d = new Date(dateStr + 'T00:00:00'); d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return iso(d); };
+let PROGRAM_START = '2026-11-23'; // Monday of program week 1 (progression counts from here)
 const programWeek = (date) => Math.max(1, Math.floor((new Date(date + 'T00:00:00') - new Date(PROGRAM_START + 'T00:00:00')) / (7 * 86400000)) + 1);
 const lsGet = (k) => { try { return localStorage.getItem(k); } catch { return null; } };
 let useGym = lsGet('diet.gym') === '1';
@@ -209,7 +228,7 @@ function strengthDay(date, which, gym) {
       ? [m('레그 프레스 머신', 35, '허리를 등받이에 붙이고 무릎은 끝까지 펴지 않기. 마지막 2회가 힘든 무게'), m('힙 어브덕션 머신', 20), m('체스트 프레스 머신', 30), m('랫 풀다운', 30, '가슴을 펴고 당기기, 몸을 뒤로 젖히지 않기'), m('시티드 로우 머신', 30, '가슴을 패드에 대고, 허리는 세운 채')]
       : [m('레그 프레스 머신', 35, '허리를 등받이에 붙이고 마지막 2회가 힘든 무게'), m('시티드 레그 컬 머신', 25), m('숄더 프레스 머신', 25, '가벼운 무게로 어깨를 올리지 않기'), m('랫 풀다운', 30), m('체스트 프레스 머신', 30)];
   }
-  return [WARM(gym), ...main, ...BIG3, COOL];
+  return [WARM(gym), ...main, ...(BACK ? BIG3 : []), COOL];
 }
 function cardioDay(day, gym) {
   const c = {
@@ -218,6 +237,8 @@ function cardioDay(day, gym) {
     4: gym ? { name: '실내 사이클 인터벌', duration: 35, kcal: 190, notes: '빠르게 3분 + 보통 2분 × 7회' } : { name: '인터벌 걷기', duration: 35, kcal: 170, notes: '빠르게 3분 + 보통 2분 × 7회' },
     6: gym ? { name: '트레드밀 + 사이클', duration: 50, kcal: 230, notes: '25분씩, 대화 가능한 강도' } : { name: '길게 걷기', duration: 50, kcal: 220, notes: '평소보다 조금 빠르게, 쉬지 않고 이어서' },
   }[day];
+  const add = TREND.exAdd || 0;
+  if (add) { const d = c.duration, nd = Math.min(60, d + add); c.kcal = Math.round((c.kcal * nd) / d); c.duration = nd; c.notes += ` (체중 감량이 더뎌서 +${nd - d}분)`; }
   return [{ category: '유산소', ...c }, COOL];
 }
 function exercisesFor(date) {
@@ -266,6 +287,15 @@ async function setItemStatus(kind, i, st, actual) {
   if (mealDate === today) todayPlan = dayPlan;
   render();
 }
+async function setMealSkip(type) {
+  const idx = dayPlan.meals.map((m, i) => i).filter((i) => dayPlan.meals[i].type === type);
+  const allSkip = idx.every((i) => itemStatus(dayPlan.meals[i]) === 'skip');
+  idx.forEach((i) => { const { st, actual, done, ...base } = dayPlan.meals[i]; dayPlan.meals[i] = allSkip ? { ...base, done: false } : { ...base, st: 'skip', done: false }; });
+  await store.meals.save(mealDate, dayPlan.meals);
+  await syncRecordFromPlan(mealDate, dayPlan);
+  if (mealDate === today) todayPlan = dayPlan;
+  render();
+}
 function togglePlanItem(kind, i) {
   const st = itemStatus(dayPlan[kind][i]);
   if (st === 'swap' || st === 'skip') return openStatusSheet(kind, i);
@@ -292,6 +322,7 @@ function openStatusSheet(kind, i) {
   const planTxt = isMeal ? `${item.grams ? item.grams + 'g · ' : ''}${item.kcal ?? '–'}kcal` : exDetail(item) || '';
   openSheet(`<div class="sheet-head"><h2>${esc(item.name)}</h2></div>
     <p class="desc">계획: ${esc(planTxt)}<br>계획은 그대로 두고, 실제로 ${isMeal ? '먹은' : '한'} 것만 기록해요.</p>
+    ${isMeal ? '' : `<button type="button" class="link-btn" style="padding:0 0 10px" data-exinfo="${esc(item.name)}">▶ 운동 방법·영상 보기 ›</button>`}
     <div class="opt-list">
       <button class="opt${st === 'done' || !st ? ' on' : ''}" data-st="done">${isMeal ? '계획대로 먹었어요' : '계획대로 했어요'}</button>
       <button class="opt${st === 'swap' ? ' on' : ''}" data-st="swap">${isMeal ? '다른 걸 먹었어요' : '다른 운동을 했어요'}</button>
@@ -305,7 +336,9 @@ function openStatusSheet(kind, i) {
           : `<label class="unit-in"><input id="aMin" type="number" inputmode="numeric" value="${a.duration ?? ''}" placeholder="0"><span>분</span></label>`}
         <label class="unit-in"><input id="aK" type="number" inputmode="numeric" value="${a.kcal ?? ''}" placeholder="${isMeal ? '0' : '자동'}"><span>kcal</span></label>
       </div>
-      ${isMeal ? `<label class="f">즐겨찾기에서 고르기</label><div class="favpanel" id="aFav">${favChipsHtml()}</div>` : ''}
+      ${isMeal ? `<label class="f">비슷한 칼로리 대체 메뉴</label><div class="favpanel" id="aAlt">${altFoods(item).map((f, i) => `<button type="button" class="favchip" data-i="${FOODS.indexOf(f)}">${esc(f.name)} · ${f.kcal}kcal</button>`).join('') || '<div class="empty" style="padding:6px 0">추천할 메뉴가 없어요</div>'}</div>
+        <label class="f">음식 검색</label>${foodSearchHtml()}
+        <label class="f">즐겨찾기에서 고르기</label><div class="favpanel" id="aFav">${favChipsHtml()}</div>` : ''}
     </div>
     <div class="err" id="err"></div>
     <button class="btn" id="stSave">저장</button>
@@ -316,6 +349,9 @@ function openStatusSheet(kind, i) {
     sheet.querySelectorAll('[data-st]').forEach((x) => x.classList.toggle('on', x === b));
     $('#swapForm').hidden = pick !== 'swap';
   }; });
+  const fillFood = (f) => { $('#aName').value = f.name; $('#aG').value = f.grams ?? ''; $('#aK').value = f.kcal ?? ''; };
+  if ($('#aAlt')) $('#aAlt').onclick = (e) => { const c = e.target.closest('.favchip'); if (c) fillFood(FOODS[c.dataset.i]); };
+  if (isMeal) wireFoodSearch(sheet.querySelector('.fs'), fillFood);
   if ($('#aFav')) $('#aFav').onclick = (e) => {
     const c = e.target.closest('.favchip'); if (!c) return;
     const f = favorites[c.dataset.fav]; $('#aName').value = f.name; $('#aG').value = f.grams ?? ''; $('#aK').value = f.kcal ?? '';
@@ -329,7 +365,7 @@ function openStatusSheet(kind, i) {
       else { const duration = num($('#aMin').value); actual = { name, duration, kcal: num($('#aK').value) ?? estimateExerciseKcal(name, duration) }; }
     }
     closeSheet();
-    try { await setItemStatus(kind, i, pick, actual); } catch (e) { alert(e.message); }
+    try { await setItemStatus(kind, i, pick, actual); } catch (e) { alert(authMsg(e)); }
   };
   if ($('#stClear')) $('#stClear').onclick = async () => { closeSheet(); await setItemStatus(kind, i, '', null); };
 }
@@ -395,6 +431,7 @@ function viewHome() {
     <div class="eyebrow">${dailyQuote()}</div>
     <div class="big">${last ? Number(last.weight).toFixed(2) + ' kg' : '체중을 기록해주세요'}</div>
     ${first && last && first !== last ? `<div class="delta ${diff <= 0 ? 'down' : 'up'}">시작 대비 ${diff > 0 ? '+' : ''}${diff.toFixed(2)} kg</div>` : ''}
+    ${last ? `<div class="delta">목표 ${GOAL}kg까지 ${Math.max(0, Number(last.weight) - GOAL).toFixed(2)} kg</div>` : ''}
     <button class="pill-btn" id="quickWeight">${t?.weight != null ? '오늘 체중 수정' : '오늘 체중 입력'}</button>
   </div>
   ${items.length ? `<div class="card"><div class="card-title">오늘 할 일<span class="sub">${doneN}/${items.length} 완료</span></div><div class="bar"><i style="width:${pct}%"></i></div>
@@ -415,7 +452,7 @@ function openWeightSheet() {
   $('#wSave').onclick = async () => {
     const w = num($('#wIn').value); if (w == null) return;
     const rec = { date: today, weight: Math.round(w * 100) / 100, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: r.calories_burned ?? null, meals: r.meals || [], exercises: r.exercises || [] };
-    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = e.message; }
+    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = authMsg(e); }
   };
 }
 
@@ -423,6 +460,7 @@ function openWeightSheet() {
 // Entered: weight, fat_pct, smm (skeletal muscle), visceral (level), whr (waist-hip ratio).
 // Calculated: fat mass, lean mass, BMR (InBody: 370 + 21.6 × lean mass), BMI (needs height).
 let HEIGHT = null; // cm
+let PROFILE = null, GOAL = 50, BACK = true; // set by onboarding (null profile = existing account defaults)
 const IB_FIELDS = [
   ['weight', '체중', 'kg', 2, true], ['fat_pct', '체지방률', '%', 1, true], ['smm', '골격근량', 'kg', 2, true],
   ['visceral', '내장지방레벨', '', 0, true], ['whr', '복부비만율', '', 2, true],
@@ -461,7 +499,7 @@ function openInbodySheet(date) {
   sheet.querySelectorAll('input').forEach((x) => { x.oninput = auto; }); auto();
   const save = async (inbody) => {
     const rec = { date, weight: r.weight ?? (inbody?.weight ?? null), steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: r.calories_burned ?? null, meals: r.meals || [], exercises: r.exercises || [], inbody };
-    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = e.message.includes('inbody') ? '인바디 저장 칸이 아직 없어요. Supabase에서 0004_inbody.sql을 먼저 실행해주세요.' : e.message; }
+    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = (e.message || '').includes('inbody') ? '인바디 저장 칸이 아직 없어요. Supabase에서 0004_inbody.sql을 먼저 실행해주세요.' : authMsg(e); }
   };
   $('#ibSave').onclick = () => { const v = read(); if (v.fat_pct == null && v.smm == null) { $('#err').textContent = '체지방률이나 골격근량 중 하나는 입력해주세요.'; return; } save(v); };
   if ($('#ibDel')) $('#ibDel').onclick = () => save(null);
@@ -490,7 +528,7 @@ function lineChart(rows, val, fmt) {
 }
 let ibMetric = 'fat_pct';
 function viewStats() {
-  const rows = recs().filter((r) => r[metric] != null).slice(-30);
+  const rows = recs().filter((r) => r[metric] != null && r.date >= START).slice(-30);
   const meta = { weight: ['몸무게', 'kg'], calories_consumed: ['섭취', 'kcal'], calories_burned: ['소모', 'kcal'], steps: ['걸음', '걸음'] };
   const seg = Object.entries(meta).map(([k, [n]]) => `<button data-metric="${k}" class="${k === metric ? 'on' : ''}">${n}</button>`).join('');
   const body = rows.length ? lineChart(rows, (r) => Number(r[metric]), (v) => (metric === 'weight' ? v.toFixed(2) : Math.round(v).toLocaleString())) : '<div class="empty">아직 기록이 없어요</div>';
@@ -506,7 +544,7 @@ function viewStats() {
       ${ser.length ? lineChart(ser.map(([r]) => r), (r) => ibCalc(r.inbody)[ibMetric], (v) => ibFmt(v, f[3])) : '<div class="empty">값이 없어요</div>'}
       <div class="ib-hist">${ibs.slice().reverse().map((r) => { const c = ibCalc(r.inbody); return `<button class="li" data-ibdate="${r.date}"><span>${dateLabel(r.date)}</span><span class="g">체지방 ${ibFmt(c.fat_pct, 1)}% · 골격근 ${ibFmt(c.smm, 2)}kg</span></button>`; }).join('')}</div></div>`;
   }
-  return `<div class="card"><div class="eyebrow">최근 30회 기록 · ${meta[metric][1]}</div><div class="seg" style="margin-top:12px">${seg}</div>${body}</div>${ibCard}`;
+  return `<div class="card"><div class="eyebrow">시작일(${dateLabel(START)}) 이후 · ${meta[metric][1]}</div><div class="seg" style="margin-top:12px">${seg}</div>${body}</div>${ibCard}`;
 }
 
 function startOfWeek(dateStr) { const d = new Date(dateStr + 'T00:00:00'); d.setDate(d.getDate() - d.getDay()); return d; }
@@ -530,7 +568,8 @@ function viewMeals() {
   const ate = (r.meals || []).reduce((a, m) => a + (m.kcal || 0), 0);
   const groups = MEAL_TYPES.map((type) => {
     const rows = dayPlan.meals.map((m, i) => [m, i]).filter(([m]) => m.type === type);
-    return rows.length ? `<div class="mg-label">${type}</div>${rows.map(([m, i]) => checkRow('meals', i, m)).join('')}` : '';
+    const allSkip = rows.length && rows.every(([m]) => itemStatus(m) === 'skip');
+    return rows.length ? `<div class="mg-label">${type}<button type="button" class="skipall" data-skipmeal="${type}">${allSkip ? '안 먹음 취소' : '통으로 안 먹었어요'}</button></div>${rows.map(([m, i]) => checkRow('meals', i, m)).join('')}` : '';
   }).join('');
   const extra = (r.meals || []).filter((m) => !m.plan);
   const exExtra = (r.exercises || []).filter((x) => !x.plan);
@@ -573,32 +612,34 @@ function openExerciseSheet(date) {
     if (!added.length) { $('#err').textContent = '운동 이름을 입력해주세요.'; return; }
     const r = cache[date] || {};
     const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: r.calories_burned ?? null, meals: r.meals || [], exercises: [...(r.exercises || []), ...added] };
-    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = e.message; }
+    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = authMsg(e); }
   };
 }
 
 function guessMealType(date) {
   if (date !== today) return '아침';
   const h = new Date().getHours();
-  return h < 10 ? '아침' : h < 15 ? '점심' : h < 21 ? '저녁' : '간식';
+  return h < 4 ? '야식' : h < 10 ? '아침' : h < 15 ? '점심' : h < 21 ? '저녁' : '야식';
 }
 // food-only entry: adds to the day's record without touching weight, steps, exercise or the plan
 function openFoodSheet(date) {
   openSheet(`<div class="sheet-head"><h2>${dateLabel(date)} 음식 추가</h2></div>
     <p class="desc small">계획에 없던 음식만 적어요. 다른 기록은 그대로예요.</p>
+    ${foodSearchHtml()}
     <div id="rows">${mealRowEdit({ type: guessMealType(date) })}</div>
     <div class="favrow"><button class="add" id="add">+ 음식 더 추가</button><button class="add" id="favToggle">☆ 자주 먹는 음식에서 추가</button></div>
     <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
     <div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
   $('#add').onclick = wireMealRows($('#rows'));
   wireFavPanel($('#favToggle'), $('#favPanel'), $('#rows'));
+  wireFoodSearch(sheet.querySelector('.fs'), (f) => addFoodRow($('#rows'), { type: SNACKISH.includes(f.cat) ? '간식' : guessMealType(date), name: f.name, grams: f.grams, kcal: f.kcal }));
   $('#save').onclick = async () => {
     const added = readMealRows($('#rows'));
     if (!added.length) { $('#err').textContent = '음식 이름을 입력해주세요.'; return; }
     const r = cache[date] || {};
     const meals = [...(r.meals || []), ...added];
     const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: meals.reduce((a, m) => a + (m.kcal || 0), 0) || null, calories_burned: r.calories_burned ?? null, meals, exercises: r.exercises || [] };
-    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = e.message; }
+    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = authMsg(e); }
   };
 }
 
@@ -616,7 +657,12 @@ function viewSettings() {
     <div class="seg" style="margin:6px 0 4px"><button class="${useGym ? '' : 'on'}" data-gym="0">집 (맨몸)</button><button class="${useGym ? 'on' : ''}" data-gym="1">헬스장 (머신)</button></div>
     <p class="desc small" style="margin:0 0 16px">추천 플랜을 새로 받을 때부터 적용돼요.</p>
     <div class="eyebrow">모드</div><div style="margin:6px 0 16px">${store?.label || ''}</div>
-    ${store?.mode === 'supabase' ? '<button class="btn ghost" id="doLogout">로그아웃</button>' : ''}
+    <button type="button" class="in daterow" id="profileBtn" style="margin:0 0 16px">내 목표·운동 설정 (목표 ${GOAL}kg)<span class="chev">›</span></button>
+    ${store?.mode === 'supabase' ? `<div class="eyebrow">내 기록 공유하기</div>
+    <button type="button" class="in daterow" id="shareBtn" style="margin:6px 0 16px">${shareToken ? '공유 중 · 링크 보기' : '읽기 전용 링크 만들기'}<span class="chev">›</span></button>
+    <div class="eyebrow">계정 관리</div>
+    <button class="btn ghost" id="chPw">비밀번호 변경</button><button class="btn ghost" id="doLogout">로그아웃</button>
+    <button class="btn ghost" id="delAcct" style="color:var(--up)">회원 탈퇴</button>` : ''}
   </div>`;
 }
 async function setStartDate(d) {
@@ -643,8 +689,26 @@ function weekCard() {
     <p class="desc small">근력 ${w.strDone}/${w.str}일 · 유산소 ${w.aerDone}/${w.aer}분 완료 · 근력 시간을 합친 활동량 약 ${active}분 (감량 목표 250분 이상)</p>
     <p class="desc small">근력은 전신을 주 2~3회, 같은 근육은 하루 이상 쉬게 배치했어요. 처음 2주는 2세트, 3~4주는 3세트, 5주부터 횟수를 늘려요. 강도는 "말은 할 수 있지만 노래는 못 부르는" 정도가 기준이에요.</p></div>`;
 }
+function trendCard() {
+  const t = TREND;
+  if (t.status === 'few') return `<div class="card"><div class="card-title">체중 추이 분석</div><p class="desc">다이어트 시작일 이후 체중을 4번 이상, 10일 이상 간격으로 기록하면 감량 속도를 분석해서 식단과 운동을 자동으로 맞춰드려요.</p></div>`;
+  const label = { good: ['목표 속도예요', 's-done'], slow: ['조금 느려요', 's-part'], stall: ['정체 구간이에요', 's-wait'], fast: ['너무 빨라요', 's-swap'] }[t.status];
+  const msg = {
+    good: `주 0.3~${t.fastMax.toFixed(1)}kg이 건강한 속도예요. 지금 플랜을 그대로 유지해요.`,
+    slow: '식단은 그대로 두고, 유산소를 회당 5분 늘렸어요.',
+    stall: t.atFloor ? '식단은 이미 최저선(1,300kcal)이라 줄이지 않고, 유산소를 회당 10분 늘렸어요.' : '하루 목표를 100kcal 낮추고 유산소를 회당 10분 늘렸어요. (최저 1,300kcal은 지켜요)',
+    fast: '근손실 위험이 있어 하루 목표를 100kcal 올렸어요. 단백질과 근력운동은 꼭 지켜주세요.',
+  }[t.status];
+  const left = t.w - GOAL, wks = t.loss > 0.1 ? left / t.loss : null;
+  return `<div class="card"><div class="card-title">체중 추이 분석<span class="pill ${label[1]}">${label[0]}</span></div>
+    <div class="sum-row"><span class="sum-k" style="width:auto">${Math.round(t.span)}일간</span><b>주 ${Math.abs(t.loss).toFixed(2)}kg ${t.loss >= 0 ? '감량' : '증가'} <small>/ ${t.n}회 측정</small></b></div>
+    <p class="desc">${msg}</p>
+    ${wks && wks <= 104 ? `<p class="desc small">이 속도라면 목표 ${GOAL}kg까지 약 ${Math.ceil(wks)}주 걸려요.</p>` : ''}
+    <p class="desc small">새로 만드는 플랜부터 적용돼요. 이미 만든 날은 아래 '추천 플랜으로 채우기'를 눌러 바꿀 수 있어요.</p></div>`;
+}
 function viewPlan() {
   return `<div class="card"><button type="button" class="in daterow" id="planDateBtn">${dateLabel(planDate)}<span class="chev">›</span></button></div>
+  ${trendCard()}
   ${weekCard()}
   <div class="card"><div class="card-title">추천 플랜<span class="sub">하루 ${kcalTarget(latestWeight()).toLocaleString()}kcal</span></div>
     <p class="desc">체중 기준 주 0.5kg 감량 속도로 맞췄어요. 건강을 위해 ${KCAL_FLOOR.toLocaleString()}kcal 아래로는 내려가지 않아요. 허리에 무리 없는 운동만 넣었어요.</p>
@@ -701,6 +765,250 @@ sheet.addEventListener('click', (e) => { const fav = e.target.closest('.favmini'
 })();
 
 /* meal row editor: type + name + grams/kcal with unit labels */
+const FOODS = `
+현미밥 1공기|210|310|식사
+백미밥 1공기|210|310|식사
+잡곡밥 1공기|210|300|식사
+김치찌개|400|250|식사
+된장찌개|350|150|식사
+순두부찌개|400|220|식사
+부대찌개|450|480|식사
+미역국|300|70|식사
+소고기뭇국|300|110|식사
+북엇국|300|90|식사
+콩나물국|250|40|식사
+계란국|250|70|식사
+시금치 나물|70|45|식사
+콩나물 무침|70|40|식사
+김치|50|15|식사
+깍두기|50|20|식사
+계란후라이 1개|50|90|식사
+삶은 계란 1개|50|75|식사
+계란찜|120|100|식사
+계란말이|100|150|식사
+두부부침|100|120|식사
+두부스테이크|150|180|식사
+닭가슴살 구이|100|120|식사
+닭가슴살 샐러드|250|250|식사
+닭볶음탕|300|330|식사
+제육볶음|200|380|식사
+불고기|150|260|식사
+소고기 우둔 구이|100|150|식사
+삼겹살 구이|150|520|식사
+수육|100|230|식사
+고등어구이|100|230|식사
+연어구이|100|200|식사
+생선구이(조기·삼치)|100|150|식사
+오징어볶음|200|260|식사
+어묵볶음|80|120|식사
+멸치볶음|30|90|식사
+감자조림|100|110|식사
+애호박볶음|100|60|식사
+버섯볶음|100|60|식사
+잡채|150|250|식사
+김밥 1줄|230|450|식사
+참치김밥 1줄|240|480|식사
+삼각김밥 1개|110|180|식사
+주먹밥 1개|100|170|식사
+비빔밥|450|580|식사
+나물 비빔밥|400|550|식사
+김치볶음밥|400|650|식사
+볶음밥|400|620|식사
+오므라이스|400|700|식사
+카레라이스|450|660|식사
+덮밥(제육·불고기)|450|700|식사
+회덮밥|450|620|식사
+죽 (야채·닭)|400|230|식사
+오트밀 1회분|40|150|식사
+그릭요거트 1통|150|100|식사
+요거트(플레인) 1컵|100|65|식사
+우유 1컵|200|130|음료
+두유 1팩|190|100|음료
+샐러드(드레싱 포함)|150|120|식사
+고구마 1개|120|150|식사
+군고구마 큰 것|200|260|식사
+감자 1개 (삶은)|130|100|식사
+옥수수 1개|150|130|식사
+바나나 1개|100|90|간식
+사과 1개|200|100|간식
+귤 1개|80|35|간식
+오렌지 1개|150|70|간식
+방울토마토 10개|150|30|간식
+토마토 1개|180|35|간식
+딸기 10알|150|50|간식
+블루베리 한 줌|50|30|간식
+포도 1송이(작은)|150|100|간식
+수박 1조각|300|90|간식
+참외 1개|250|90|간식
+키위 1개|90|50|간식
+견과류 1봉|25|150|간식
+아몬드 10알|15|90|간식
+단백질바 1개|50|190|간식
+프로틴 쉐이크 1잔|300|150|음료
+삶은 계란 2개|100|150|간식
+치즈 1장|20|60|간식
+오이 1개|100|15|간식
+당근 스틱|100|40|간식
+라면 1봉(국물 반)|500|500|외식
+라면 1봉|550|520|외식
+짜장면|600|800|외식
+짬뽕|700|700|외식
+탕수육 1인분|250|650|외식
+볶음짬뽕밥|500|850|외식
+칼국수|550|600|외식
+잔치국수|500|450|외식
+비빔국수|400|550|외식
+냉면(물·비빔)|550|520|외식
+막국수|500|480|외식
+우동|500|450|외식
+돈가스 정식|350|850|외식
+치즈돈가스|300|900|외식
+김치우동|500|470|외식
+떡볶이 1인분|300|430|외식
+순대 1인분|150|300|외식
+튀김 1개|40|90|외식
+오뎅(어묵) 1꼬치|50|60|외식
+만두 5개|150|330|외식
+군만두 5개|150|400|외식
+냉동만두 5개 (찐)|150|320|외식
+설렁탕|500|450|외식
+갈비탕|600|500|외식
+삼계탕|900|900|외식
+순댓국|600|650|외식
+돼지국밥|600|620|외식
+육개장|450|380|외식
+감자탕 1인분|500|520|외식
+해장국|500|420|외식
+곰탕|500|400|외식
+꼬리곰탕|550|480|외식
+샤브샤브 1인분(채소·고기)|500|450|외식
+샤브샤브 칼국수 추가|200|300|외식
+쌀국수|550|480|외식
+팟타이|350|650|외식
+초밥 10개|250|450|외식
+회 1인분|150|200|외식
+연어회 1인분|150|290|외식
+연어덮밥|400|600|외식
+소고기 스테이크 200g|200|450|외식
+토마토 파스타|400|650|외식
+크림 파스타|400|850|외식
+알리오올리오|350|600|외식
+까르보나라|400|900|외식
+볼로네제 파스타|400|700|외식
+리조또|350|600|외식
+피자 1조각|110|280|외식
+피자 2조각|220|560|외식
+햄버거(싱글)|200|500|외식
+치즈버거|200|520|외식
+감자튀김(중)|110|340|외식
+치킨 후라이드 1조각|100|250|외식
+치킨 양념 1조각|110|290|외식
+치킨 후라이드 반 마리|400|1000|외식
+닭강정 1인분|200|550|외식
+족발 1인분|200|500|외식
+보쌈 1인분|200|450|외식
+곱창 1인분|200|600|외식
+삼겹살 1인분(구이)|180|620|외식
+소고기 구이 1인분|150|350|외식
+갈비 1인분|200|520|외식
+냉동 닭가슴살 소시지 1개|100|110|간식
+샌드위치(편의점)|180|320|외식
+토스트(야채·계란)|150|300|외식
+샐러드 파스타|300|420|외식
+브런치 에그베네딕트|300|550|외식
+시리얼 1회분 + 우유|230|250|식사
+식빵 1장|35|100|식사
+식빵 2장 + 잼|80|230|식사
+베이글 1개|100|270|식사
+크림치즈 베이글|130|380|식사
+아메리카노|355|10|음료
+카페라떼|355|150|음료
+오트밀 라떼|355|180|음료
+카푸치노|355|120|음료
+바닐라라떼|355|250|음료
+카라멜 마키아토|355|250|음료
+카페모카|355|290|음료
+아이스티|355|100|음료
+녹차·차(무가당)|300|0|음료
+콜라 1캔|250|105|음료
+제로콜라 1캔|250|0|음료
+사이다 1캔|250|100|음료
+주스 1컵|200|100|음료
+스무디 1잔|355|250|음료
+밀크티|355|250|음료
+버블티|500|400|음료
+맥주 1캔|355|150|음료
+맥주 500cc|500|210|음료
+소주 1잔|50|60|음료
+소주 1병|360|400|음료
+막걸리 1잔|200|90|음료
+와인 1잔|150|120|음료
+하이볼 1잔|300|130|음료
+이온음료 1병|500|100|음료
+바스크 치즈케이크 1조각|120|380|디저트
+치즈케이크 1조각|120|350|디저트
+생크림 케이크 1조각|120|320|디저트
+쿠키 1개|40|180|디저트
+마카롱 1개|30|110|디저트
+도넛 1개|70|250|디저트
+글레이즈드 도넛|70|260|디저트
+크루아상 1개|60|230|디저트
+소금빵 1개|70|230|디저트
+케이크 크림빵 1개|100|300|디저트
+아이스크림 1컵|100|200|디저트
+아이스크림 바 1개|80|150|디저트
+빙수 1인분|500|550|디저트
+호떡 1개|90|230|디저트
+붕어빵 1개|50|100|디저트
+와플 1개|100|290|디저트
+초콜릿 1칸|10|55|디저트
+초콜릿 바 1개|50|260|디저트
+젤리 1봉|50|170|디저트
+과자 1봉|60|320|디저트
+감자칩 1봉|60|330|디저트
+팝콘 1컵|60|250|디저트
+떡 1개|50|110|디저트
+인절미 3개|80|180|디저트
+고구마 말랭이|50|150|간식
+핫도그 1개|100|280|디저트
+약과 1개|40|170|디저트
+`.trim().split('\n').map((l) => { const [name, grams, kcal, cat] = l.split('|'); return { name, grams: +grams, kcal: +kcal, cat }; });
+
+const SNACKISH = ['간식', '음료', '디저트'];
+const foodNorm = (t) => t.toLowerCase().replace(/\s+/g, '');
+function foodSearchHtml() {
+  return `<div class="fs"><input class="in fs-in" placeholder="🔍 음식 검색 (예: 파스타, 라떼, 치킨)">
+    <div class="seg fs-mult">${[0.5, 1, 1.5, 2].map((m) => `<button type="button" data-m="${m}"${m === 1 ? ' class="on"' : ''}>${m === 1 ? '1인분' : m + '배'}</button>`).join('')}</div>
+    <div class="fs-res favpanel"></div></div>`;
+}
+function wireFoodSearch(root, onPick) {
+  const inp = root.querySelector('.fs-in'), res = root.querySelector('.fs-res'); let mult = 1;
+  const draw = () => {
+    const q = foodNorm(inp.value); if (!q) { res.innerHTML = ''; return; }
+    const hit = FOODS.map((f, i) => [f, i, foodNorm(f.name).indexOf(q)]).filter((x) => x[2] >= 0).sort((a, b) => a[2] - b[2]).slice(0, 10);
+    res.innerHTML = hit.length ? hit.map(([f, i]) => `<button type="button" class="favchip" data-i="${i}">${esc(f.name)} · ${Math.round(f.kcal * mult)}kcal</button>`).join('')
+      : '<div class="empty" style="padding:6px 0">목록에 없어요. 아래에 직접 적어주세요.</div>';
+  };
+  inp.oninput = draw;
+  root.querySelector('.fs-mult').onclick = (e) => {
+    const b = e.target.closest('button'); if (!b) return; mult = Number(b.dataset.m);
+    root.querySelectorAll('.fs-mult button').forEach((x) => x.classList.toggle('on', x === b)); draw();
+  };
+  res.onclick = (e) => {
+    const c = e.target.closest('.favchip'); if (!c) return; const f = FOODS[c.dataset.i];
+    onPick({ name: f.name, grams: Math.round(f.grams * mult), kcal: Math.round(f.kcal * mult), cat: f.cat });
+    inp.value = ''; res.innerHTML = '';
+  };
+}
+function addFoodRow(box, v) {
+  const rows = box.querySelectorAll('.mealrow'), last = rows[rows.length - 1];
+  if (last && !last.querySelector('.f-name').value.trim()) last.outerHTML = mealRowEdit(v); else box.insertAdjacentHTML('beforeend', mealRowEdit(v));
+}
+function altFoods(item) {
+  const k = item.kcal || 200, snack = item.type === '간식' || item.type === '야식';
+  return FOODS.filter((f) => (snack ? SNACKISH.includes(f.cat) : ['식사', '외식'].includes(f.cat)) && f.name !== item.name && Math.abs(f.kcal - k) <= Math.max(60, k * 0.25))
+    .sort((a, b) => Math.abs(a.kcal - k) - Math.abs(b.kcal - k)).slice(0, 8);
+}
 function mealRowEdit(v = {}, opts = {}) {
   const on = v.name && isFavorite(v.name);
   const star = opts.star === false ? '' : `<button type="button" class="favstar${on ? ' on' : ''}" title="즐겨찾기에 저장">${on ? '★' : '☆'}</button>`;
@@ -742,7 +1050,7 @@ function wireMealRows(box) {
       };
       if (!item.name) return;
       const type = row.querySelector('.sel-type')?.value;
-      item.category = type === '간식' ? '간식' : '식사';
+      item.category = type === '간식' || type === '야식' ? '간식' : '식사';
       await addFavorite(item);
       e.target.textContent = '★'; e.target.classList.add('on');
     }
@@ -797,6 +1105,12 @@ function estimateExerciseKcal(name, duration) {
   return Math.round(rate * duration);
 }
 /* record sheet: view mode by default, 편집 switches to edit mode */
+function ibMini(ib) {
+  if (!ib) return '';
+  const c = ibCalc(ib);
+  const cell = (l, v, d, u) => `<div class="ib-cell"><small>${l}</small><b>${ibFmt(v, d)}<span class="u">${u}</span></b></div>`;
+  return `<label class="f">인바디</label><div class="ib-grid">${cell('체지방률', c.fat_pct, 1, '%')}${cell('골격근량', c.smm, 2, 'kg')}${cell('기초대사량', c.bmr, 0, 'kcal')}</div>`;
+}
 function openRecordSheet(date) {
   if (READONLY) { if (cache[date]) renderView(date); return; }
   if (cache[date]) renderView(date); else renderEdit(date);
@@ -807,7 +1121,7 @@ function renderView(date) {
   <div class="sheet-head"><h2>${dateLabel(date)} 기록</h2><button class="edit-link" id="toEdit">편집</button></div>
   <div class="two"><div class="stat"><small>몸무게</small><b>${r.weight != null ? Number(r.weight).toFixed(2) + ' kg' : '–'}</b></div><div class="stat"><small>걸음 수</small><b>${r.steps ?? '–'}</b></div></div>
   <div class="two" style="margin-top:10px"><div class="stat"><small>섭취</small><b>${kcal(r.calories_consumed)}</b></div><div class="stat"><small>소모</small><b>${kcal(r.calories_burned)}</b></div></div>
-  <label class="f">식사</label>${mealGroupsHtml(r.meals)}
+  ${ibMini(r.inbody)}<label class="f">식사</label>${mealGroupsHtml(r.meals)}
   <label class="f">운동</label>${(r.exercises || []).map(exRowView).join('') || '<div class="empty">기록된 운동이 없어요</div>'}`);
   $('#toEdit').onclick = () => renderEdit(date);
 }
@@ -837,7 +1151,7 @@ function renderEdit(date) {
       calories_consumed: num($('#f-in').value) ?? (meals.length ? meals.reduce((a, m) => a + (m.kcal || 0), 0) : null),
       calories_burned: num($('#f-out').value), meals, exercises,
     };
-    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = e.message; }
+    try { await store.save(rec); closeSheet(); await refresh(); } catch (e) { $('#err').textContent = authMsg(e); }
   };
   $('#save').onclick = doSave;
   $('#headSave').onclick = doSave;
@@ -859,7 +1173,7 @@ function renderPicker() {
   for (let i = 0; i < lead; i++) cells += '<div class="day out"></div>';
   for (let d = 1; d <= dim; d++) {
     const date = `${y}-${pad(m + 1)}-${pad(d)}`;
-    cells += `<button class="day${date === pickerSelected ? ' sel' : ''}${date === today ? ' today' : ''}" data-pick="${date}"><span class="n">${d}</span></button>`;
+    cells += `<button class="day${date === pickerSelected ? ' sel' : ''}${date === today ? ' today' : ''}" data-pick="${date}">${cache[date]?.inbody ? '<i class="ibmark">IN</i>' : ''}<span class="n">${d}</span></button>`;
   }
   openSheet(`<div class="sheet-head"><h2>날짜 선택</h2></div>
     <div class="cal-head"><button id="pPrev">‹</button><b>${y}년 ${m + 1}월</b><button id="pNext">›</button></div>
@@ -872,12 +1186,13 @@ function renderPicker() {
 
 async function editPlanMeals() {
   const rows = (planData.meals || []).map((x) => mealRowEdit(x)).join('');
-  openSheet(`<div class="sheet-head"><h2>${dateLabel(planDate)} 식단 계획</h2></div><div id="rows">${rows}</div>
+  openSheet(`<div class="sheet-head"><h2>${dateLabel(planDate)} 식단 계획</h2></div>${foodSearchHtml()}<div id="rows">${rows}</div>
   <div class="favrow"><button class="add" id="add">+ 추가</button><button class="add" id="favToggle">☆ 즐겨찾기에서 추가</button></div>
   <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
   <div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
   $('#add').onclick = wireMealRows($('#rows'));
   wireFavPanel($('#favToggle'), $('#favPanel'), $('#rows'));
+  wireFoodSearch(sheet.querySelector('.fs'), (f) => addFoodRow($('#rows'), { type: SNACKISH.includes(f.cat) ? '간식' : '점심', name: f.name, grams: f.grams, kcal: f.kcal }));
   $('#save').onclick = async () => {
     try {
       const old = planData.meals || [];
@@ -886,7 +1201,7 @@ async function editPlanMeals() {
         return o ? { ...m, ...(o.st ? { st: o.st } : {}), ...(o.actual ? { actual: o.actual } : {}), done: !!o.done } : m;
       });
       await store.meals.save(planDate, meals); closeSheet(); await refreshPlan();
-    } catch (e) { $('#err').textContent = e.message; }
+    } catch (e) { $('#err').textContent = authMsg(e); }
   };
 }
 function editFavorites() { renderFavoritesView(); }
@@ -909,7 +1224,7 @@ function renderFavoritesEdit() {
   $('#add').onclick = () => $('#rows').insertAdjacentHTML('beforeend', favRowEdit({ category: favFilter || '식사' }));
   $('#rows').onclick = (e) => { if (e.target.classList.contains('rm')) e.target.closest('.mealrow').remove(); };
   const doSave = async () => {
-    try { favorites = readFavRows($('#rows')); await store.favorites.save(favorites); renderFavoritesView(); render(); } catch (e) { $('#err').textContent = e.message; }
+    try { favorites = readFavRows($('#rows')); await store.favorites.save(favorites); renderFavoritesView(); render(); } catch (e) { $('#err').textContent = authMsg(e); }
   };
   $('#save').onclick = doSave;
   $('#headSaveFav').onclick = doSave;
@@ -945,7 +1260,7 @@ async function editPlanExercises() {
     try {
       const exercises = readExRows($('#rows'));
       await store.exercises.save(planDate, exercises); closeSheet(); await refreshPlan();
-    } catch (e) { $('#err').textContent = e.message; }
+    } catch (e) { $('#err').textContent = authMsg(e); }
   };
 }
 
@@ -1020,6 +1335,7 @@ $('#view').addEventListener('click', (e) => {
   if (e.target.closest('#genDay')) return generatePlan(mealDate).then(async () => { if (mealDate === today) await loadToday(); await loadDay(); render(); });
   if (e.target.closest('#quickWeight')) return openWeightSheet();
   if (e.target.closest('#genToday')) return generatePlan(today).then(refresh);
+  const sk = e.target.closest('[data-skipmeal]'); if (sk) return setMealSkip(sk.dataset.skipmeal);
   const t = e.target.closest('[data-date],#prev,#next,[data-metric],[data-plan],[data-recdate],#openCal,#doLogout,#planDateBtn,#startDateBtn,#favManageBtn,[data-recedit]'); if (!t) return;
   if (t.id === 'doLogout') return store.sb.auth.signOut().then(() => location.reload());
   if (t.id === 'openCal') return openDatePicker(recordDate, (d) => { recordDate = d; render(); });
@@ -1045,24 +1361,304 @@ document.querySelector('.tabs').addEventListener('click', async (e) => {
   if (tab === 'plan') await refreshPlan(); else if (tab === 'meals') { await loadDay(); render(); } else render();
 });
 
-function showLogin(sb) {
+// password reset by emailed 6-digit code (needs {{ .Token }} in Supabase's "Reset password" email template)
+function showReset(sb, email0 = '') {
   const box = $('#login'); box.hidden = false;
-  box.innerHTML = `<div class="card"><h2 style="margin-bottom:6px">다이어트 기록</h2><div class="eyebrow">이메일로 가입하고 내 기록을 시작하세요. 기록은 본인만 볼 수 있어요.</div>
-    <input class="in" id="em" type="email" placeholder="이메일" autocomplete="username"><input class="in" id="pw" type="password" placeholder="비밀번호 (6자 이상)" autocomplete="current-password">
-    <div class="err" id="lerr"></div><button class="btn" id="go">로그인</button><button class="btn ghost" id="su">처음이에요 (회원가입)</button>
-    <p class="desc small" style="margin:14px 0 0">아이폰: Safari 공유 버튼 → <b>홈 화면에 추가</b>하면 앱처럼 쓸 수 있어요.</p></div>`;
-  const run = (fn) => async () => {
-    const { data, error } = await sb.auth[fn]({ email: $('#em').value.trim(), password: $('#pw').value });
-    if (error) $('#lerr').textContent = error.message;
-    else if (!data.session) $('#lerr').textContent = '가입 확인 메일을 보냈어요. 메일의 링크를 누른 뒤 로그인해주세요.';
-    else location.reload();
+  box.innerHTML = `<div class="card"><h2 style="margin-bottom:6px">비밀번호 재설정</h2><div class="eyebrow">가입한 이메일로 인증 코드를 보내드려요</div>
+    <input class="in" id="em" type="email" placeholder="이메일" value="${esc(email0)}" autocomplete="username">
+    <div class="err" id="lerr"></div><button class="btn" id="send">인증 코드 받기</button><button class="btn ghost" id="back">로그인으로 돌아가기</button></div>`;
+  $('#back').onclick = () => showLogin(sb);
+  $('#send').onclick = async () => {
+    const email = $('#em').value.trim(); if (!email) return;
+    const { error } = await sb.auth.resetPasswordForEmail(email);
+    if (error) { $('#lerr').textContent = authMsg(error); return; }
+    box.innerHTML = `<div class="card"><h2 style="margin-bottom:6px">새 비밀번호 설정</h2><div class="eyebrow">${esc(email)}로 보낸 메일의 인증 코드를 입력하세요</div>
+      <input class="in" id="code" inputmode="numeric" autocomplete="one-time-code" placeholder="인증 코드">
+      <input class="in" id="np" type="password" placeholder="새 비밀번호 (6자 이상)" autocomplete="new-password">
+      <div class="err" id="lerr"></div><button class="btn" id="setpw">비밀번호 바꾸기</button><button class="btn ghost" id="back">취소</button></div>`;
+    $('#back').onclick = () => showLogin(sb);
+    $('#setpw').onclick = async () => {
+      const np = $('#np').value; if (np.length < 6) { $('#lerr').textContent = '비밀번호는 6자 이상이에요.'; return; }
+      const v = await sb.auth.verifyOtp({ email, token: $('#code').value.trim(), type: 'recovery' });
+      if (v.error) { $('#lerr').textContent = '코드가 맞지 않거나 만료됐어요.'; return; }
+      const u = await sb.auth.updateUser({ password: np });
+      if (u.error) { $('#lerr').textContent = authMsg(u.error); return; }
+      location.reload();
+    };
   };
-  $('#go').onclick = run('signInWithPassword'); $('#su').onclick = run('signUp');
+}
+// Supabase auth errors → Korean
+function authMsg(err) {
+  if (/[가-힣]/.test(err?.message || '')) return err.message;
+  const m = `${err?.code || ''} ${err?.message || ''}`.toLowerCase();
+  const T = [
+    [/invalid login|invalid_credentials/, '이메일 또는 비밀번호가 맞지 않아요.'],
+    [/not confirmed|email_not_confirmed/, '이메일 인증이 아직 안 됐어요. 받은 메일의 링크를 눌러 주세요.'],
+    [/already registered|user_already_exists|already been registered/, '이미 가입된 이메일이에요. 로그인해 주세요.'],
+    [/at least 6|weak_password|password should be/, '비밀번호는 6자 이상이어야 해요.'],
+    [/different from the old|same_password/, '이전과 다른 비밀번호를 입력해 주세요.'],
+    [/rate limit|too many|over_.*_rate/, '요청이 너무 많아요. 잠시 후 다시 시도해 주세요.'],
+    [/valid email|invalid format|validate email|email_address_invalid/, '이메일 형식이 올바르지 않아요.'],
+    [/signup.*disabled|signups not allowed/, '지금은 가입할 수 없어요.'],
+    [/otp.*expired|token.*expired|invalid.*token|otp_expired/, '코드가 맞지 않거나 만료됐어요.'],
+    [/failed to fetch|network|load failed/, '인터넷 연결을 확인해 주세요.'],
+    [/not authenticated|jwt|session/, '로그인이 만료됐어요. 다시 로그인해 주세요.'],
+  ];
+  return (T.find(([re]) => re.test(m)) || [0, '문제가 생겼어요. 잠시 후 다시 시도해 주세요.'])[1];
+}
+function showLogin(sb, mode = 'login', keep = {}) {
+  const su = mode === 'signup';
+  const box = $('#login'); box.hidden = false;
+  box.innerHTML = `<div class="card"><h2 style="margin-bottom:6px">${su ? '회원가입' : '로그인'}</h2>
+    <div class="eyebrow">${su ? '이메일과 비밀번호를 정해 주세요' : '이메일과 비밀번호로 로그인하세요'}</div>
+    <input class="in" id="em" type="email" placeholder="이메일" autocomplete="username" value="${esc(keep.em || '')}">
+    <input class="in" id="pw" type="password" placeholder="${su ? '비밀번호 (6자 이상)' : '비밀번호'}" autocomplete="${su ? 'new-password' : 'current-password'}">
+    ${su ? '<input class="in" id="pw2" type="password" placeholder="비밀번호 확인" autocomplete="new-password">' : ''}
+    <div class="err" id="lerr"></div>
+    <button class="btn" id="go">${su ? '가입하기' : '로그인'}</button>
+    <button class="link-btn" id="swap" style="text-align:center;width:100%;margin-top:10px">${su ? '이미 계정이 있어요 · 로그인' : '처음이에요 · 회원가입'}</button>
+    ${su ? '' : '<button class="link-btn" id="forgot" style="text-align:center;width:100%;margin-top:2px">비밀번호를 잊으셨나요?</button>'}
+    ${/^https?:$/.test(location.protocol) ? '<p class="desc small" style="margin:14px 0 0">아이폰: Safari 공유 버튼 → <b>홈 화면에 추가</b>하면 앱처럼 쓸 수 있어요.</p>' : ''}</div>`;
+  const err = (t, ok) => { const el = $('#lerr'); el.style.color = ok ? 'var(--blue)' : ''; el.textContent = t; };
+  $('#swap').onclick = () => showLogin(sb, su ? 'login' : 'signup', { em: $('#em').value });
+  if ($('#forgot')) $('#forgot').onclick = () => showReset(sb, $('#em').value);
+  $('#go').onclick = async () => {
+    const email = $('#em').value.trim(), pw = $('#pw').value;
+    if (!email) return err('이메일을 입력해 주세요.');
+    if (!pw) return err('비밀번호를 입력해 주세요.');
+    if (su) {
+      if (pw.length < 6) return err('비밀번호는 6자 이상이어야 해요.');
+      if (pw !== $('#pw2').value) return err('비밀번호가 서로 달라요. 다시 확인해 주세요.');
+    }
+    $('#go').disabled = true;
+    const { data, error } = su ? await sb.auth.signUp({ email, password: pw }) : await sb.auth.signInWithPassword({ email, password: pw });
+    $('#go').disabled = false;
+    if (error) return err(authMsg(error));
+    if (su && !data.session) return err('확인 메일을 보냈어요. 메일의 링크를 누른 뒤 로그인해 주세요.', true);
+    location.reload();
+  };
+}
+
+
+/* ---------------- onboarding (first launch) ---------------- */
+function applyProfile(p) {
+  PROFILE = p; if (!p) return;
+  if (p.goal) GOAL = Number(p.goal);
+  BACK = p.back !== false;
+  if (p.place) useGym = p.place === 'gym';
+  if (p.program_start) PROGRAM_START = p.program_start;
+}
+async function loadProfile() {
+  let p = null;
+  try { p = JSON.parse(lsGet('diet.profile')); } catch {}
+  if (store.mode === 'supabase') {
+    const { data: u } = await store.sb.auth.getUser();
+    const { data, error } = await store.sb.from('users').select('profile').eq('id', u.user.id).maybeSingle();
+    if (!error && data?.profile) p = data.profile;
+  }
+  applyProfile(p);
+}
+function showOnboarding(mode) {
+  const edit = mode === 'edit';
+  const box = $('#login'); box.hidden = false; box.classList.add('ob');
+  const A = edit ? { h: HEIGHT ?? '', w: latestWeight() ?? '', g: GOAL, place: useGym ? 'gym' : 'home', back: BACK ? 'yes' : 'no', level: PROFILE?.level || 'new' }
+    : { h: '', w: '', g: '', place: null, back: null, level: null };
+  let step = 0; const N = 4;
+  const pickCards = (key, opts) => `<div class="ob-cards">${opts.map(([v, t, d, ic]) => `<button class="ob-card${A[key] === v ? ' on' : ''}" data-k="${key}" data-v="${v}"><span class="ob-ic">${ic}</span><b>${t}</b><small>${d}</small></button>`).join('')}</div>`;
+  const STEPS = [
+    () => ['몸 정보를 알려주세요', '목표 칼로리와 BMI를 계산하는 데 써요.',
+      `<label class="f">키</label><label class="unit-in"><input class="in" id="oh" type="number" step="0.1" inputmode="decimal" value="${A.h}" placeholder="0"><span>cm</span></label>
+       <label class="f">현재 체중</label><label class="unit-in"><input class="in" id="ow" type="number" step="0.01" inputmode="decimal" value="${A.w}" placeholder="0.00"><span>kg</span></label>
+       <label class="f">목표 체중</label><label class="unit-in"><input class="in" id="og" type="number" step="0.1" inputmode="decimal" value="${A.g}" placeholder="0"><span>kg</span></label>`],
+    () => ['어디서 운동하실 건가요?', '나중에 설정에서 바꿀 수 있어요.',
+      pickCards('place', [['home', '집에서 맨몸', '기구 없이 바로 시작해요', '🏠'], ['gym', '헬스장', '머신 위주 루틴으로 짜 드려요', '🏋️']])],
+    () => ['허리나 관절이 불편한가요?', '불편하면 허리를 보호하는 운동(맥길 빅3)을 매번 넣어요.',
+      pickCards('back', [['no', '괜찮아요', '일반 전신 루틴', '👍'], ['yes', '허리가 불편해요', '허리 안전 운동 포함', '🩹']])],
+    () => ['운동 경험은 어느 정도예요?', '강도와 세트 수를 여기에 맞춰 시작해요.',
+      pickCards('level', [['new', '처음이에요', '2세트부터 천천히', '🌱'], ['some', '가끔 해요', '2주 차 강도부터', '🚶'], ['steady', '꾸준히 해요', '3주 차 강도부터', '🔥']])],
+  ];
+  const draw = () => {
+    const [h, sub, body] = STEPS[step]();
+    box.innerHTML = `<div class="ob-wrap"><div class="ob-top">${step || edit ? '<button class="ob-back" id="obBack" aria-label="이전">‹</button>' : '<span></span>'}<div class="ob-bar"><i style="width:${((step + 1) / N) * 100}%"></i></div><span class="ob-n">${step + 1}/${N}</span></div>
+      <h1 class="ob-h">${h}</h1><p class="desc">${sub}</p>${body}<div class="err" id="oerr"></div>
+      <button class="btn ob-next" id="obNext">${step === N - 1 ? (edit ? '저장하기' : '시작하기') : '다음'}</button></div>`;
+    box.querySelectorAll('.ob-card').forEach((b) => { b.onclick = () => { A[b.dataset.k] = b.dataset.v; draw(); }; });
+    if ($('#obBack')) $('#obBack').onclick = () => { collect(); if (step === 0) { box.hidden = true; box.classList.remove('ob'); box.innerHTML = ''; return; } step--; draw(); };
+    $('#obNext').onclick = next;
+  };
+  const collect = () => { if (step === 0) { A.h = $('#oh').value; A.w = $('#ow').value; A.g = $('#og').value; } };
+  const fail = (m) => { $('#oerr').textContent = m; };
+  const next = async () => {
+    collect();
+    if (step === 0) {
+      const h = num(A.h), w = num(A.w), g = num(A.g);
+      if (h == null || h < 120 || h > 220) return fail('키를 120~220cm 사이로 입력해 주세요.');
+      if (w == null || w < 30 || w > 250) return fail('현재 체중을 입력해 주세요.');
+      if (g == null || g >= w) return fail('목표 체중은 현재 체중보다 낮게 입력해 주세요.');
+      const minW = 18.5 * (h / 100) ** 2;
+      if (g < minW) return fail(`키 ${h}cm에서 건강한 최저 체중은 약 ${minW.toFixed(1)}kg이에요. 목표를 그 위로 잡아 주세요.`);
+    }
+    if (step === 1 && !A.place) return fail('운동 장소를 골라 주세요.');
+    if (step === 2 && !A.back) return fail('하나를 골라 주세요.');
+    if (step === 3 && !A.level) return fail('하나를 골라 주세요.');
+    if (step < N - 1) { step++; return draw(); }
+    $('#obNext').disabled = true; $('#obNext').textContent = '플랜 만드는 중…';
+    try { await (edit ? saveProfileEdit(A) : finishOnboarding(A)); location.reload(); } catch (e) { $('#obNext').disabled = false; $('#obNext').textContent = '시작하기'; fail(authMsg(e)); }
+  };
+  draw();
+}
+async function saveProfileEdit(A) {
+  const h = num(A.h), g = num(A.g);
+  const profile = { ...(PROFILE || {}), goal: g, place: A.place, back: A.back === 'yes', level: A.level };
+  try { localStorage.setItem('diet.profile', JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); } catch {}
+  if (store.mode === 'supabase') {
+    const { data: u } = await store.sb.auth.getUser();
+    const r = await store.sb.from('users').update({ height: h, profile }).eq('id', u.user.id);
+    if (r.error) throw new Error(r.error.message);
+  }
+}
+async function finishOnboarding(A) {
+  const h = num(A.h), w = num(A.w), g = num(A.g);
+  const mon = new Date(today + 'T00:00:00'); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
+  const back = { new: 0, some: 1, steady: 2 }[A.level]; mon.setDate(mon.getDate() - 7 * back);
+  const profile = { goal: g, place: A.place, back: A.back === 'yes', level: A.level, program_start: mon.toLocaleDateString('sv') };
+  try { localStorage.setItem('diet.profile', JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); localStorage.setItem('diet.startDate', today); } catch {}
+  if (store.mode === 'supabase') {
+    const { data: u } = await store.sb.auth.getUser();
+    const upd = (o) => store.sb.from('users').update(o).eq('id', u.user.id);
+    let r = await upd({ height: h, start_date: today, profile });
+    if (r.error) r = await upd({ start_date: today }); // profile/height columns missing → migration 0005 not run yet; keep local copy
+    if (r.error) throw new Error(r.error.message);
+  }
+  applyProfile(profile); HEIGHT = h; START = today;
+  await store.save({ date: today, weight: w, meals: [], exercises: [] });
+  await loadAll();
+  for (let i = 0; i < 7; i++) await generatePlan(addDays(today, i));
+}
+
+/* ---------------- exercise guide (tap an exercise to see how-to + video) ----------------
+   yt = YouTube video id (null → search link only). Videos are shown as tap-to-play (playsinline) with an "open in YouTube" fallback. */
+const EX_GUIDE = [
+  { k: '맥길 컬업', m: '복직근 · 코어', yt: 'p6X1-Hb30I4', q: '맥길 컬업 방법', steps: ['바닥에 누워 한쪽 무릎은 세우고 다른 다리는 편하게 펴요.', '두 손을 허리 밑 빈 공간에 깔아 허리 커브를 유지해요.', '머리와 어깨만 살짝(몇 cm) 들어 8초 버텨요. 허리는 바닥에서 뜨지 않아야 해요.', '천천히 내려오고 6→4→2회 순서로 반복해요. 다리를 바꿔 반복해도 좋아요.'], tips: ['윗몸일으키기가 아니에요. 높이 올라갈수록 허리에 부담이 커져요.', '버티는 동안 숨을 참지 말고 짧게 나눠 쉬어요.'] },
+  { k: '사이드 플랭크', m: '옆구리 · 허리 안정근', yt: 'p6X1-Hb30I4', q: '무릎 대고 사이드 플랭크', steps: ['옆으로 누워 팔꿈치를 어깨 바로 아래에 둬요.', '무릎은 굽혀 바닥에 대고, 머리-어깨-골반이 일직선이 되게 골반을 들어요.', '8초 버티고 내려와요. 좌우 각각 6→4→2회 반복해요.'], tips: ['골반이 앞뒤로 말리지 않게 배에 힘을 줘요.', '쉬워지면 무릎을 펴고 발로 지지해요.'] },
+  { k: '버드독', m: '허리 · 엉덩이 · 코어', yt: 'p6X1-Hb30I4', q: '버드독 운동 방법', steps: ['네발기기 자세에서 손은 어깨 아래, 무릎은 고관절 아래에 둬요.', '배에 힘을 주고 한쪽 팔과 반대쪽 다리를 천천히 길게 뻗어요.', '8초 버티고 돌아와요. 좌우 번갈아 6→4→2회 반복해요.'], tips: ['다리를 높이 올리지 말고 몸과 일직선까지만. 허리가 꺾이면 안 돼요.', '골반이 한쪽으로 기울지 않게 등 위에 컵이 있다고 생각해요.'] },
+  { k: '맨몸 스쿼트', m: '허벅지 · 엉덩이', yt: 'J-eLKNd7Fyo', q: '맨몸 스쿼트 올바른 자세', steps: ['발을 어깨너비로 벌리고 발끝은 살짝 바깥으로 향해요.', '엉덩이를 뒤로 빼며 의자에 앉듯 내려가요. 가슴은 펴고 시선은 정면.', '허벅지가 바닥과 평행해지면(편한 깊이까지) 발바닥 전체로 바닥을 밀며 일어서요.', '무릎은 발끝 방향으로 향하게 하고, 내려갈 때 숨을 마시고 올라올 때 내쉬어요.'], tips: ['뒤꿈치가 뜨거나 무릎이 안쪽으로 모이면 깊이를 줄여요.', '허리가 둥글게 말리면 멈춰요.'] },
+  { k: '글루트 브릿지', m: '엉덩이 · 햄스트링', yt: 'FG-FdqMGaY8', q: '글루트 브릿지 방법', steps: ['누워서 무릎을 세우고 발은 엉덩이 너비로 둬요.', '엉덩이를 조이며 골반을 들어 무릎-골반-어깨가 일직선이 되게 해요.', '위에서 1~2초 멈추고 천천히 내려와요.'], tips: ['허리로 들지 말고 엉덩이 힘으로 올려요. 허리가 과하게 꺾이면 높이를 낮춰요.'] },
+  { k: '무릎 푸시업', m: '가슴 · 어깨 · 팔', yt: 'm0X3PLXX8Qc', q: '무릎 푸시업 자세', steps: ['무릎을 바닥에 대고 손은 어깨보다 약간 넓게 짚어요.', '머리-어깨-엉덩이-무릎이 일직선이 되게 배에 힘을 줘요.', '팔꿈치를 몸에서 약 45도로 벌리며 가슴이 바닥 가까이 내려가요.', '바닥을 밀며 올라와요.'], tips: ['엉덩이가 뒤로 빠지거나 허리가 처지지 않게 해요.', '천천히 내려가면(3초) 더 효과적이에요.'] },
+  { k: '리버스 런지', m: '허벅지 · 엉덩이', yt: 'k1xIOOo_w9A', q: '리버스 런지 올바른 자세', steps: ['발을 모으고 서서 한 발을 뒤로 크게 내딛어요.', '양 무릎이 90도 정도 되게 몸을 수직으로 내려요.', '앞발 뒤꿈치로 밀며 처음 자세로 돌아와요. 반대 다리도 같은 방법으로 해요.'], tips: ['상체는 곧게, 앞무릎은 발끝을 넘지 않게. 균형이 안 잡히면 벽을 짚어요.'] },
+  { k: '힙 힌지', m: '엉덩이 · 햄스트링 · 허리 보호', yt: 'JbfrA2w8uUI', q: '힙 힌지 맨몸 방법', steps: ['발은 어깨너비, 무릎은 살짝만 굽혀요.', '손을 골반에 대고 엉덩이를 뒤로 쭉 밀며 상체를 숙여요. 등은 곧게 유지해요.', '햄스트링이 당겨지는 지점에서 멈추고 엉덩이를 앞으로 밀며 일어나요.'], tips: ['허리가 아니라 고관절에서 접히는 느낌이 핵심이에요. 허리가 아프면 범위를 줄여요.'] },
+  { k: '옆으로 누워 다리 들기', m: '엉덩이 옆 · 고관절', yt: null, q: '옆으로 누워 다리 들기 중둔근', steps: ['옆으로 누워 아래 다리는 굽히고 위 다리는 곧게 펴요.', '골반이 뒤로 말리지 않게 고정하고 위 다리를 천천히 들어요.', '1초 멈추고 천천히 내려요. 좌우 같은 횟수로 해요.'], tips: ['다리를 높이 들기보다 엉덩이 옆 힘으로 천천히. 몸통이 흔들리면 범위를 줄여요.'] },
+  { k: '엎드려 Y-T', m: '등 · 어깨 뒤쪽', yt: '9UjOG68QlxA', q: '엎드려 Y T W 레이즈', steps: ['엎드려서 이마를 바닥에 두고 팔을 Y자로 머리 위에 뻗어요.', '엄지를 천장으로 향하게 하고 팔만 살짝 들어 1초 멈춰요. 이어서 T자도 같은 방식으로 해요.', '날개뼈를 아래로 모으는 느낌으로, 허리는 들지 않아요.'], tips: ['가볍게 들어도 충분해요. 목에 힘이 들어가면 시선을 바닥에 둬요.'] },
+  { k: '엎드려 W', m: '등 · 어깨 뒤쪽', yt: '9UjOG68QlxA', q: '엎드려 W 레이즈', steps: ['엎드려서 팔꿈치를 굽혀 W 모양으로 만들어요.', '날개뼈를 모으며 팔을 살짝 들어 1초 멈추고 내려요.'], tips: ['허리가 꺾이지 않게 배를 살짝 조여요.'] },
+  { k: '전신 스트레칭', m: '허리 · 햄스트링 · 고관절', yt: 'XZCJRfhYJ-w', q: '운동 후 전신 스트레칭', steps: ['목, 어깨, 가슴을 먼저 부드럽게 풀어요.', '허리는 고양이-소 자세, 햄스트링은 누워서 다리 당기기, 고관절은 런지 자세로 늘려요.', '각 동작을 20~30초씩, 아프지 않고 시원한 정도까지만 유지해요.'], tips: ['반동을 주지 말고 호흡을 길게 내쉬며 천천히 늘려요.'] },
+  { k: '인터벌 걷기', m: '심폐 · 하체', yt: null, q: '인터벌 걷기 방법', steps: ['5분 정도 천천히 걸으며 몸을 풀어요.', '빠르게 3분(숨이 차지만 짧게 말은 할 수 있는 정도) → 보통 속도 2분을 7번 반복해요.', '마지막에 천천히 걸으며 마무리해요.'], tips: ['팔은 90도로 굽혀 자연스럽게 흔들고, 발뒤꿈치부터 닿아요.', '숨이 너무 차면 빠른 구간 속도를 낮춰요.'] },
+  { k: '빠르게 걷기', m: '심폐 · 하체', yt: null, q: '올바른 걷기 자세 빠르게 걷기', steps: ['시선은 정면, 가슴은 열고 턱은 살짝 당겨요.', '보폭은 평소보다 약간 넓게, 팔은 자연스럽게 앞뒤로 흔들어요.', '말은 할 수 있지만 노래는 못 부를 정도의 속도를 유지해요.'], tips: ['발은 뒤꿈치 → 발바닥 → 앞꿈치 순서로 닿게 해요.'] },
+  { k: '길게 걷기', m: '심폐 · 하체', yt: null, q: '올바른 걷기 자세', steps: ['편한 신발을 신고 쉬지 않고 이어서 걸어요.', '평소보다 조금 빠르게, 대화가 가능한 강도로 유지해요.'], tips: ['물을 챙기고, 허리가 아프면 보폭을 줄여요.'] },
+  { k: '산책', m: '회복 · 심폐', yt: null, q: '올바른 걷기 자세', steps: ['편한 속도로 걸으며 몸을 풀어줘요.', '어깨와 목에 힘을 빼고 호흡을 편하게 해요.'], tips: ['회복일에는 숨이 차지 않는 강도가 좋아요.'] },
+  { k: '레그 프레스', m: '허벅지 · 엉덩이', yt: null, q: '레그프레스 머신 사용법', steps: ['등과 엉덩이를 등받이에 붙이고 발은 어깨너비로 플레이트 중간에 둬요.', '무릎을 끝까지 펴지 않는 지점까지 밀어요.', '천천히 무릎이 90도 정도 되도록 돌아와요. 엉덩이가 들리지 않게 해요.'], tips: ['무릎이 안쪽으로 모이지 않게. 처음엔 가벼운 무게로 자세부터 익혀요.'] },
+  { k: '레그 컬', m: '햄스트링', yt: null, q: '시티드 레그컬 머신 사용법', steps: ['패드를 종아리 아래쪽에 맞추고 등받이에 기대요.', '발뒤꿈치를 엉덩이 쪽으로 천천히 당겨요.', '천천히 돌아오며 햄스트링의 긴장을 유지해요.'], tips: ['반동 없이, 올라올 때 2초 내려갈 때 3초 정도로 천천히 해요.'] },
+  { k: '힙 어브덕션', m: '엉덩이 옆', yt: null, q: '힙 어브덕션 머신 사용법', steps: ['등받이에 허리를 붙이고 무릎 바깥쪽에 패드를 대요.', '엉덩이 옆 힘으로 다리를 천천히 벌려요.', '천천히 모으되 완전히 닫지 말고 긴장을 유지해요.'], tips: ['상체를 앞뒤로 흔들지 않아요.'] },
+  { k: '체스트 프레스', m: '가슴 · 어깨 · 팔', yt: null, q: '체스트 프레스 머신 사용법', steps: ['손잡이가 가슴 중간 높이에 오도록 의자를 조절해요.', '등을 등받이에 붙이고 어깨를 내린 채 앞으로 밀어요.', '팔꿈치를 완전히 펴지 않고 천천히 돌아와요.'], tips: ['어깨가 으쓱 올라가지 않게 해요.'] },
+  { k: '랫 풀다운', m: '등 · 팔', yt: null, q: '랫풀다운 올바른 자세', steps: ['허벅지 패드를 고정하고 바를 어깨너비보다 넓게 잡아요.', '가슴을 펴고 바를 쇄골 쪽으로 팔꿈치를 아래로 당겨요.', '천천히 팔을 펴며 올려요.'], tips: ['몸을 뒤로 젖혀 반동으로 당기지 않아요. 허리가 꺾이지 않게 해요.'] },
+  { k: '시티드 로우', m: '등 · 팔', yt: null, q: '시티드 로우 머신 사용법', steps: ['가슴을 패드에 붙이고 손잡이를 잡아요.', '날개뼈를 모으며 팔꿈치를 뒤로 당겨요.', '천천히 팔을 펴며 돌아와요.'], tips: ['허리는 세우고 어깨는 귀에서 멀리 내려요.'] },
+  { k: '숄더 프레스', m: '어깨', yt: null, q: '숄더 프레스 머신 사용법', steps: ['손잡이가 어깨 높이에 오도록 시트를 맞춰요.', '허리를 등받이에 붙인 채 위로 밀어요.', '팔꿈치를 완전히 펴지 않고 천천히 내려와요.'], tips: ['가벼운 무게로. 허리가 꺾이면 무게를 낮춰요.'] },
+  { k: '트레드밀', m: '심폐 · 하체', yt: null, q: '트레드밀 경사 걷기 방법', steps: ['속도 4~5km/h, 경사 5~7%로 맞춰요.', '손잡이를 잡지 않고 자연스럽게 팔을 흔들며 걸어요.', '말은 할 수 있지만 노래는 못 부를 정도의 강도를 유지해요.'], tips: ['경사가 높아도 몸을 앞으로 심하게 숙이지 않아요.'] },
+  { k: '사이클', m: '심폐 · 하체', yt: null, q: '실내 사이클 올바른 자세', steps: ['안장 높이를 페달이 가장 아래일 때 무릎이 살짝 굽혀지게 맞춰요.', '허리를 곧게 세우고 어깨에 힘을 빼요.', '지정된 강도(빠르게/보통)를 번갈아 유지해요.'], tips: ['무릎이 안쪽으로 모이지 않게 해요.'] },
+];
+const guideFor = (name) => EX_GUIDE.find((g) => name.includes(g.k)) || null;
+const ytThumb = (id) => `https://img.youtube.com/vi/${id}/hqdefault.jpg`;
+function openExerciseGuide(name) {
+  const g = guideFor(name), base = name.replace(/\s*\(.*?\)/g, '');
+  const q = encodeURIComponent((g?.q || base + ' 운동 방법'));
+  const search = `https://www.youtube.com/results?search_query=${q}`;
+  const plan = [...(dayPlan?.exercises || []), ...(planData?.exercises || [])].find((x) => x.name === name);
+  openSheet(`<div class="sheet-head"><h2>${esc(name)}</h2></div>
+    ${plan ? `<p class="desc small">${esc(exDetail(plan))}${plan.notes ? ' · ' + esc(plan.notes) : ''}</p>` : ''}
+    ${g ? `<div class="eyebrow">자극 부위 · ${esc(g.m)}</div>
+      ${g.yt ? `<button type="button" class="yt" data-yt="${g.yt}" aria-label="영상 재생"><img src="${ytThumb(g.yt)}" alt=""><span class="yt-play">▶</span></button>` : ''}
+      <label class="f">이렇게 해요</label><ol class="guide">${g.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
+      <label class="f">자세 팁 · 주의</label><ul class="guide tips">${g.tips.map((s) => `<li>${esc(s)}</li>`).join('')}<li>허리나 관절에 날카로운 통증이 느껴지면 바로 멈춰요.</li></ul>`
+      : '<p class="desc">이 운동은 아직 설명이 없어요. 아래 버튼으로 영상을 찾아보세요.</p>'}
+    <a class="btn ghost yt-link" href="${search}" target="_blank" rel="noopener">${g?.yt ? '▶ YouTube에서 열기 / 다른 영상 찾기' : '▶ YouTube에서 영상 찾아보기'}</a>`);
+}
+document.addEventListener('click', async (e) => {
+  if (e.target.closest('#chPw')) return openPasswordSheet();
+  if (e.target.closest('#delAcct')) return openDeleteSheet();
+  if (e.target.closest('#shareBtn')) return openShareSheet();
+  if (e.target.closest('#profileBtn')) return showOnboarding('edit');
+  const yb = e.target.closest('[data-yt]');
+  if (yb) { yb.outerHTML = `<div class="yt"><iframe src="https://www.youtube-nocookie.com/embed/${yb.dataset.yt}?playsinline=1&autoplay=1&rel=0&modestbranding=1" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`; return; }
+  const t = e.target.closest('[data-exinfo]'); if (t) openExerciseGuide(t.dataset.exinfo);
+});
+
+function shareBase() {
+  if (CFG.SHARE_BASE) return CFG.SHARE_BASE;
+  return /^https?:$/.test(location.protocol) && !/^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) ? location.origin + location.pathname : null;
+}
+const shareUrl = () => `${shareBase() || '(웹앱 주소)/'}?share=${shareToken}`;
+function openShareSheet() {
+  const base = shareBase();
+  openSheet(`<div class="sheet-head"><h2>내 기록 공유하기</h2></div>
+    <p class="desc">링크를 받은 사람은 내 체중·식단·운동·인바디를 <b>보기만</b> 할 수 있어요(수정 불가). 메모와 계정 정보는 공유되지 않아요. 링크를 아는 사람은 누구나 볼 수 있으니 믿는 사람에게만 보내세요.</p>
+    ${shareToken ? `<input class="in" id="shUrl" readonly value="${esc(shareUrl())}">
+      ${base ? '' : '<p class="desc small" style="color:var(--up)">지금은 이 앱이 인터넷에 올라간 주소가 아니라서 링크 앞부분을 알 수 없어요. 웹앱 주소가 정해지면 설정 파일(SHARE_BASE)에 넣어야 해요.</p>'}
+      <button class="btn" id="shCopy">링크 복사</button>${navigator.share ? '<button class="btn ghost" id="shSend">공유하기…</button>' : ''}
+      <button class="btn ghost" id="shNew">링크 새로 만들기 (이전 링크는 못 열어요)</button>
+      <button class="btn ghost" id="shOff" style="color:var(--up)">공유 끝내기</button>`
+      : '<button class="btn" id="shOn">읽기 전용 링크 만들기</button>'}
+    <div class="err" id="err"></div>`);
+  const set = async (en) => { const { data, error } = await store.sb.rpc('set_share', { enable: en }); if (error) { $('#err').textContent = authMsg(error); return; } shareToken = data; openShareSheet(); render(); };
+  if ($('#shOn')) $('#shOn').onclick = () => set(true);
+  if ($('#shNew')) $('#shNew').onclick = () => { if (confirm('이전 링크는 더 이상 열리지 않아요. 새로 만들까요?')) set(true); };
+  if ($('#shOff')) $('#shOff').onclick = () => { if (confirm('공유를 끝내면 링크가 열리지 않아요.')) set(false); };
+  if ($('#shCopy')) $('#shCopy').onclick = async () => { try { await navigator.clipboard.writeText(shareUrl()); $('#shCopy').textContent = '복사했어요 ✓'; } catch { $('#shUrl').select(); $('#err').textContent = '길게 눌러 복사해 주세요.'; } };
+  if ($('#shSend')) $('#shSend').onclick = () => navigator.share({ title: '다이어트 기록', url: shareUrl() }).catch(() => {});
+}
+function openPasswordSheet() {
+  openSheet(`<div class="sheet-head"><h2>비밀번호 변경</h2></div>
+    <input class="in" id="np1" type="password" placeholder="새 비밀번호 (6자 이상)" autocomplete="new-password">
+    <input class="in" id="np2" type="password" placeholder="새 비밀번호 확인" autocomplete="new-password" style="margin-top:10px">
+    <div class="err" id="err"></div><button class="btn" id="npSave">변경하기</button>`);
+  $('#npSave').onclick = async () => {
+    const a = $('#np1').value, b = $('#np2').value;
+    if (a.length < 6) { $('#err').textContent = '비밀번호는 6자 이상이에요.'; return; }
+    if (a !== b) { $('#err').textContent = '두 비밀번호가 달라요.'; return; }
+    const { error } = await store.sb.auth.updateUser({ password: a });
+    if (error) { $('#err').textContent = authMsg(error); return; }
+    closeSheet(); alert('비밀번호를 바꿨어요.');
+  };
+}
+function openDeleteSheet() {
+  openSheet(`<div class="sheet-head"><h2>회원 탈퇴</h2></div>
+    <p class="desc">탈퇴하면 <b>계정과 모든 기록(체중·식단·운동·인바디·즐겨찾기)이 영구 삭제</b>되고 되돌릴 수 없어요. 공유 링크도 함께 사라져요.</p>
+    <p class="desc small">계속하려면 아래에 <b>탈퇴</b>라고 입력해 주세요.</p>
+    <input class="in" id="delIn" placeholder="탈퇴">
+    <div class="err" id="err"></div><button class="btn" id="delGo" style="background:var(--up)">영구 삭제하고 탈퇴</button><button class="btn ghost" id="delNo">취소</button>`);
+  $('#delNo').onclick = closeSheet;
+  $('#delGo').onclick = async () => {
+    if ($('#delIn').value.trim() !== '탈퇴') { $('#err').textContent = "'탈퇴'를 정확히 입력해 주세요."; return; }
+    $('#delGo').disabled = true;
+    const { error } = await store.sb.rpc('delete_my_account');
+    if (error) { $('#delGo').disabled = false; $('#err').textContent = authMsg(error); return; }
+    try { await store.sb.auth.signOut(); } catch {}
+    try { Object.keys(localStorage).filter((k) => k.startsWith('diet.')).forEach((k) => localStorage.removeItem(k)); } catch {}
+    location.reload();
+  };
 }
 
 (async function boot() {
   try {
     $('#hello').textContent = dailyQuote();
+    if (SHARE_PARAM && !READONLY) {
+      let D = null;
+      try {
+        const r = await fetch(`${CFG.SUPABASE_URL}/rest/v1/rpc/get_shared`, { method: 'POST', headers: { apikey: CFG.SUPABASE_ANON_KEY, Authorization: `Bearer ${CFG.SUPABASE_ANON_KEY}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ t: SHARE_PARAM }) });
+        D = r.ok ? await r.json() : null;
+      } catch {}
+      if (!D) { $('#view').innerHTML = '<div class="card"><div class="card-title">열 수 없는 링크예요</div><p class="desc">공유가 끝났거나 링크가 바뀌었어요. 공유한 사람에게 새 링크를 받아주세요.</p></div>'; document.querySelector('.tabs').hidden = true; return; }
+      window.DIET_SHARE = D; READONLY = true;
+      if (D.profile) applyProfile(D.profile);
+    }
     if (READONLY) {
       store = shareStore(window.DIET_SHARE); accountLabel = '공유 보기 (읽기 전용)';
       if (window.DIET_SHARE.start) START = window.DIET_SHARE.start;
@@ -1077,19 +1673,19 @@ function showLogin(sb) {
       if (urow?.start_date) START = urow.start_date;
       const { data: hrow } = await store.sb.from('users').select('height').eq('id', data.session.user.id).maybeSingle(); // null until 0004 migration
       if (hrow?.height) HEIGHT = Number(hrow.height);
-      const { data: prow } = await store.sb.from('users').select('program_start').eq('id', data.session.user.id).maybeSingle(); // null until 0005 migration
+      const { data: srow } = await store.sb.from('users').select('share_token').eq('id', data.session.user.id).maybeSingle();
+      shareToken = srow?.share_token || null;
+      const { data: prow } = await store.sb.from('users').select('program_start').eq('id', data.session.user.id).maybeSingle(); // set by earlier web-app versions
       if (prow?.program_start) PROGRAM_START = prow.program_start;
-      else if (prow) { PROGRAM_START = mondayOf(today); await store.sb.from('users').update({ program_start: PROGRAM_START }).eq('id', data.session.user.id); }
     } else {
       store = localStore(); accountLabel = '데모 계정';
       HEIGHT = num(lsGet('diet.height'));
-      PROGRAM_START = lsGet('diet.programStart') || mondayOf(today);
-      try { localStorage.setItem('diet.programStart', PROGRAM_START); } catch {}
       const saved = localStorage.getItem('diet.startDate');
       if (saved) START = saved;
     }
     $('#modeChip').textContent = store.label;
     favorites = await store.favorites.get();
+    if (!READONLY) { await loadProfile(); if (!PROFILE && !(await store.range('2000-01-01', '2100-01-01')).length) return showOnboarding(); }
     await refresh();
-  } catch (e) { $('#view').innerHTML = `<div class="card"><div class="err">${esc(e.message)}</div></div>`; }
+  } catch (e) { $('#view').innerHTML = `<div class="card"><div class="err">${esc(authMsg(e))}</div></div>`; }
 })();
