@@ -69,7 +69,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 계획 탭 정리';
+const APP_VERSION = '2026-11-25 · 사용방법 안내 v3 (계획 탭 설명 추가)';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -1741,6 +1741,11 @@ const TOUR = [
   { sheet: true, title: '달력', text: '날짜를 누르면 그날 기록으로 이동해요. 인바디를 잰 날은 IN 표시가 붙어 있어요.' },
   { tab: 'record', sel: TOUR_TAB('stats'), tap: true, title: '통계 탭', text: '체중과 섭취·소모 칼로리 그래프, 인바디 변화를 봐요. 눌러보세요!' },
   { tab: 'stats', sel: TOUR_TAB('plan'), tap: true, title: '계획 탭', text: '앞으로의 식단·운동 계획과 체중 추이 분석이 있어요. 눌러보세요!' },
+  { tab: 'plan', sel: '#planDateBtn', title: '날짜 고르기', text: '계획을 볼 날짜를 골라요. 눌러서 다른 날의 식단과 운동 계획으로 이동할 수 있어요.' },
+  { tab: 'plan', sel: '[data-plan="gen"]', title: '추천 플랜으로 채우기', text: '고른 날의 식단과 운동을 추천 플랜으로 새로 채워요. 내 체중과 감량 속도에 맞춰 칼로리가 정해져요. 이미 있던 그날 계획은 새 추천으로 바뀌어요.' },
+  { tab: 'plan', sel: '[data-plan="genweek"]', title: '앞으로 7일 한 번에', text: '오늘부터 7일치 계획을 한 번에 채워요. 이미 계획이 있는 날은 건너뛰니까 걱정 안 해도 돼요.' },
+  { tab: 'plan', sel: '[data-plan="meals"]', title: '식단 편집', text: '추천된 식단을 내 입맛에 맞게 바꿔요. 음식을 검색해서 추가하거나 지울 수 있어요.' },
+  { tab: 'plan', sel: '[data-plan="exercises"]', title: '운동 편집', text: '운동 계획도 직접 바꿀 수 있어요. 시간, 세트, 횟수를 고치거나 다른 운동으로 바꿔요.' },
   { tab: 'plan', sel: '.exinfo', tap: true, title: '운동 설명', text: '운동 항목을 누르면 하는 방법과 영상이 나와요. 눌러볼까요?' },
   { sheet: true, title: '운동 방법·영상', text: '자극 부위와 따라 하는 순서, 자세 팁이 나와요. 영상 썸네일을 누르면 바로 재생돼요.' },
   { tab: 'plan', sel: TOUR_TAB('settings'), tap: true, title: '설정 탭', text: '목표 체중, 키, 운동 장소를 바꾸고 기록을 공유할 수 있어요. 눌러보세요!' },
