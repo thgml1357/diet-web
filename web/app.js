@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 취소선은 안 먹은 것만';
+const APP_VERSION = '2026-11-25 · 완전/러프 식단 선택';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -207,8 +207,20 @@ const MENUS = [
     ['간식', '방울토마토', 150, 30], ['간식', '그릭요거트', 100, 70],
     ['저녁', '소고기 우둔 구이', 100, 150], ['저녁', '쌈채소', 100, 20], ['저녁', '현미밥', 80, 125], ['저녁', '계란찜', 100, 90]],
 ];
+let DIET_MODE = 'strict'; // strict = 완전 식단(음식·그램까지) / rough = 러프한 식단(끼니별 칼로리 + 메뉴 가이드)
+const ROUGH_MENUS = [
+  [['아침', '그릭요거트 + 과일 + 삶은 계란', 0, 330], ['점심', '한식 백반 한 끼 (밥 2/3공기 · 단백질 반찬 · 나물과 국)', 0, 520], ['간식', '과일 1개 또는 견과 한 줌', 0, 150], ['저녁', '샐러드 + 단백질 (닭가슴살·두부·계란)', 0, 400]],
+  [['아침', '토스트 1장 + 계란 + 우유나 두유', 0, 350], ['점심', '김밥 1줄 + 따뜻한 국물', 0, 480], ['간식', '단백질 음료나 요거트', 0, 130], ['저녁', '구이·찜 단백질 + 채소 + 밥 반 공기', 0, 450]],
+  [['아침', '오트밀이나 시리얼 + 우유 + 바나나', 0, 350], ['점심', '비빔밥·덮밥 (밥은 2/3, 단백질과 채소 듬뿍)', 0, 550], ['간식', '작은 고구마 1개 또는 바나나', 0, 130], ['저녁', '국물 요리 한 그릇 (곰탕·미역국·쌀국수) + 채소 반찬', 0, 420]],
+  [['아침', '편의점: 삶은 계란 2개 + 우유', 0, 300], ['점심', '샌드위치나 샐러드볼 + 단백질', 0, 480], ['간식', '아몬드·치즈 소량', 0, 130], ['저녁', '외식 OK: 고기·생선 메인 + 채소 + 밥 반 공기', 0, 520]],
+];
 function mealsFor(date, target) {
   const d = new Date(date + 'T00:00:00');
+  if (DIET_MODE === 'rough') {
+    const rb = ROUGH_MENUS[((Math.floor(d.getTime() / 86400000) % ROUGH_MENUS.length) + ROUGH_MENUS.length) % ROUGH_MENUS.length];
+    const rt = rb.reduce((a, m) => a + m[3], 0), rf = target / rt;
+    return rb.map(([type, name, grams, kcal]) => ({ type, name, grams, kcal: Math.round((kcal * rf) / 10) * 10, done: false }));
+  }
   const idx = Math.floor(d.getTime() / 86400000) % MENUS.length;
   const base = MENUS[(idx + MENUS.length) % MENUS.length];
   const total = base.reduce((a, m) => a + m[3], 0), f = target / total;
@@ -280,7 +292,7 @@ async function generatePlan(date) {
   if (keptM.length && fresh.length) { // fit the new meals into what is left of the day's calorie target
     const left = target - keptM.reduce((a, m) => a + (m.kcal || 0), 0), sum = fresh.reduce((a, m) => a + m.kcal, 0);
     const f = Math.min(1.5, Math.max(0.5, left / sum));
-    fresh = fresh.map((m) => ({ ...m, grams: Math.round((m.grams * f) / 5) * 5, kcal: Math.round(m.kcal * f) }));
+    fresh = fresh.map((m) => ({ ...m, grams: m.grams ? Math.round((m.grams * f) / 5) * 5 : 0, kcal: Math.round(m.kcal * f) }));
   }
   const meals = [...keptM, ...fresh].sort((a, b) => MEAL_TYPES.indexOf(a.type) - MEAL_TYPES.indexOf(b.type));
   await store.meals.save(date, meals);
@@ -1115,6 +1127,9 @@ function viewSettings() {
     <div class="eyebrow">자주 먹는 음식</div>
     <div class="favcats">${FAV_CATS.map((c) => `<button type="button" class="favcat-btn" data-favcat="${c}"><span>${c}</span><b>${favorites.filter((f) => favCat(f) === c).length}</b></button>`).join('')}</div>
     <button type="button" class="in daterow" id="favManageBtn" style="margin:8px 0 16px">전체 보기·편집 (${favorites.length})<span class="chev">›</span></button>
+    <div class="eyebrow">식단 방식</div>
+    <div class="seg" style="margin:6px 0 4px"><button class="${DIET_MODE === 'strict' ? 'on' : ''}" data-diet="strict">완전 식단</button><button class="${DIET_MODE === 'rough' ? 'on' : ''}" data-diet="rough">러프한 식단</button></div>
+    <p class="desc small" style="margin:0 0 16px">${DIET_MODE === 'rough' ? '끼니별 칼로리와 메뉴 가이드만 알려 드려요.' : '음식과 그램까지 정해 드려요.'} 바꾸면 오늘부터 7일 식단을 새로 짜요 (체크한 끼니는 그대로).</p>
     <div class="eyebrow">운동 장소</div>
     <div class="seg" style="margin:6px 0 4px"><button class="${useGym ? '' : 'on'}" data-gym="0">집 (맨몸)</button><button class="${useGym ? 'on' : ''}" data-gym="1">헬스장 (머신)</button></div>
     <div class="eyebrow">허리·관절</div>
@@ -1945,6 +1960,8 @@ $('#view').addEventListener('click', (e) => {
   if (e.target.closest('#heightBtn')) return setHeightSheet();
   const fc = e.target.closest('[data-favcat]');
   if (fc) return renderFavoritesView(fc.dataset.favcat);
+  const dt = e.target.closest('[data-diet]');
+  if (dt) { if (dt.dataset.diet === DIET_MODE) return; DIET_MODE = dt.dataset.diet; (async () => { await saveProfilePatch({ diet: DIET_MODE }); for (let i = 0; i < 7; i++) await generatePlan(addDays(today, i)); await refresh(); })(); return; }
   const gy = e.target.closest('[data-gym]');
   if (gy) { useGym = gy.dataset.gym === '1'; try { localStorage.setItem('diet.gym', useGym ? '1' : '0'); } catch {} saveProfilePatch({ place: useGym ? 'gym' : 'home' }); return render(); }
   const bk = e.target.closest('[data-back]');
@@ -2082,6 +2099,7 @@ function applyProfile(p) {
   PROFILE = p; if (!p) return;
   if (p.goal) GOAL = Number(p.goal);
   BACK = p.back !== false;
+  DIET_MODE = p.diet === 'rough' ? 'rough' : 'strict';
   if (p.place) useGym = p.place === 'gym';
   if (p.program_start) PROGRAM_START = p.program_start;
 }
@@ -2099,9 +2117,9 @@ async function loadProfile() {
 function showOnboarding(mode) {
   const edit = mode === 'edit';
   const box = $('#login'); box.hidden = false; box.classList.add('ob');
-  const A = edit ? { h: HEIGHT ?? '', w: latestWeight() ?? '', g: GOAL, place: useGym ? 'gym' : 'home', back: BACK ? 'yes' : 'no', level: PROFILE?.level || 'new' }
-    : { h: '', w: '', g: '', place: null, back: null, level: null };
-  let step = 0; const N = 4;
+  const A = edit ? { h: HEIGHT ?? '', w: latestWeight() ?? '', g: GOAL, place: useGym ? 'gym' : 'home', back: BACK ? 'yes' : 'no', level: PROFILE?.level || 'new', diet: DIET_MODE }
+    : { h: '', w: '', g: '', place: null, back: null, level: null, diet: null };
+  let step = 0; const N = 5;
   const pickCards = (key, opts) => `<div class="ob-cards">${opts.map(([v, t, d, ic]) => `<button class="ob-card${A[key] === v ? ' on' : ''}" data-k="${key}" data-v="${v}"><span class="ob-ic">${ic}</span><b>${t}</b><small>${d}</small></button>`).join('')}</div>`;
   const STEPS = [
     () => ['몸 정보를 알려주세요', '목표 칼로리와 BMI를 계산하는 데 써요.',
@@ -2114,6 +2132,8 @@ function showOnboarding(mode) {
       pickCards('back', [['no', '괜찮아요', '일반 전신 루틴', '👍'], ['yes', '허리가 불편해요', '허리 안전 운동 포함', '🩹']])],
     () => ['운동 경험은 어느 정도예요?', '강도와 세트 수를 여기에 맞춰 시작해요.',
       pickCards('level', [['new', '처음이에요', '2세트부터 천천히', '🌱'], ['some', '가끔 해요', '2주 차 강도부터', '🚶'], ['steady', '꾸준히 해요', '3주 차 강도부터', '🔥']])],
+    () => ['식단은 어떻게 짜 드릴까요?', '언제든 설정에서 바꿀 수 있어요. 바꾸면 오늘부터 7일 식단을 새로 짜요.',
+      pickCards('diet', [['strict', '완전 식단', '고구마·계란·현미밥·닭가슴살처럼 음식과 그램까지 정해 드려요', '🍠'], ['rough', '러프한 식단', '끼니별 칼로리와 메뉴 가이드만 (한식 백반·김밥·편의점·외식도 OK)', '🍱']])],
   ];
   const draw = () => {
     const [h, sub, body] = STEPS[step]();
@@ -2139,6 +2159,7 @@ function showOnboarding(mode) {
     if (step === 1 && !A.place) return fail('운동 장소를 골라 주세요.');
     if (step === 2 && !A.back) return fail('하나를 골라 주세요.');
     if (step === 3 && !A.level) return fail('하나를 골라 주세요.');
+    if (step === 4 && !A.diet) return fail('식단 방식을 골라 주세요.');
     if (step < N - 1) { step++; return draw(); }
     $('#obNext').disabled = true; $('#obNext').textContent = '플랜 만드는 중…';
     try { await (edit ? saveProfileEdit(A) : finishOnboarding(A)); location.reload(); } catch (e) { $('#obNext').disabled = false; $('#obNext').textContent = '시작하기'; fail(authMsg(e)); }
@@ -2165,19 +2186,21 @@ function openGoalSheet() {
 }
 async function saveProfileEdit(A) {
   const h = num(A.h), g = num(A.g);
-  const profile = { ...(PROFILE || {}), goal: g, place: A.place, back: A.back === 'yes', level: A.level };
+  const changedDiet = (PROFILE?.diet || 'strict') !== A.diet;
+  const profile = { ...(PROFILE || {}), goal: g, place: A.place, back: A.back === 'yes', level: A.level, diet: A.diet };
   try { localStorage.setItem(profKey(), JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); } catch {}
   if (store.mode === 'supabase') {
     const { data: u } = await store.sb.auth.getUser();
     const r = await store.sb.from('users').update({ height: h, profile }).eq('id', u.user.id);
     if (r.error) throw new Error(r.error.message);
   }
+  if (changedDiet) { applyProfile(profile); await loadAll(); for (let i = 0; i < 7; i++) await generatePlan(addDays(today, i)); }
 }
 async function finishOnboarding(A) {
   const h = num(A.h), w = num(A.w), g = num(A.g);
   const mon = new Date(today + 'T00:00:00'); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
   const back = { new: 0, some: 1, steady: 2 }[A.level]; mon.setDate(mon.getDate() - 7 * back);
-  const profile = { goal: g, place: A.place, back: A.back === 'yes', level: A.level, program_start: mon.toLocaleDateString('sv'), tour: 'pending' };
+  const profile = { goal: g, place: A.place, back: A.back === 'yes', level: A.level, diet: A.diet, program_start: mon.toLocaleDateString('sv'), tour: 'pending' };
   try { localStorage.setItem(profKey(), JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); localStorage.setItem('diet.startDate', today); } catch {}
   if (store.mode === 'supabase') {
     const { data: u } = await store.sb.auth.getUser();
