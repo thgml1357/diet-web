@@ -69,7 +69,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 새 계정 첫 설정 수정';
+const APP_VERSION = '2026-11-25 · 끼니 통째 변경 + 요약 반영';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -121,7 +121,7 @@ function mealRowView(m, x) {
   const g = m.grams ? `<span class="g">${m.grams}g</span>` : '';
   const favdata = encodeURIComponent(JSON.stringify({ name: m.name, grams: m.grams ?? null, kcal: m.kcal ?? null }));
   const on = isFavorite(m.name);
-  return `<div class="li"><div class="li-left"><button type="button" class="favmini${on ? ' on' : ''}" title="즐겨찾기에 저장" data-favitem="${favdata}">${on ? '★' : '☆'}</button><div class="li-name">${esc(m.name)}${g}</div></div><b class="kcal">${m.kcal ?? '–'} kcal</b>${x ? `<button class="more" data-xmeal="${x}" aria-label="수정·삭제">⋯</button>` : ''}</div>`;
+  return `<div class="li"><div class="li-left"><button type="button" class="favmini${on ? ' on' : ''}" title="즐겨찾기에 저장" data-favitem="${favdata}">${on ? '★' : '☆'}</button><div class="li-name">${x ? '<span class="tag t-x">계획 외</span>' : ''}${esc(m.name)}${g}</div></div><b class="kcal">${m.kcal ?? '–'} kcal</b>${x ? `<button class="more" data-xmeal="${x}" aria-label="수정·삭제">⋯</button>` : ''}</div>`;
 }
 async function favMiniClick(btn) {
   try {
@@ -259,6 +259,7 @@ async function generatePlan(date) {
    The planned name/amount/kcal are never modified; what actually happened lives in `actual`
    and is what gets copied into the day's record. */
 let todayPlan = { meals: [], exercises: [] };
+const openMeals = new Set(); // folded (all-skipped) meals the user expanded
 let mealDate = today, dayPlan = todayPlan;
 const itemStatus = (x) => x.st || (x.done ? 'done' : '');
 function actualOf(x, kind) {
@@ -296,6 +297,32 @@ async function setMealSkip(type) {
   await syncRecordFromPlan(mealDate, dayPlan);
   if (mealDate === today) todayPlan = dayPlan;
   render();
+}
+async function applyMealSwap(type, added) {
+  const r = cache[mealDate] || {};
+  cache[mealDate] = { ...r, date: mealDate, meals: [...(r.meals || []), ...added] };
+  dayPlan.meals = dayPlan.meals.map((m) => { if (m.type !== type) return m; const { st, actual, done, ...base } = m; return { ...base, st: 'skip', done: false }; });
+  await store.meals.save(mealDate, dayPlan.meals);
+  await syncRecordFromPlan(mealDate, dayPlan);
+  if (mealDate === today) todayPlan = dayPlan;
+}
+function openMealSwapSheet(type) {
+  const n = dayPlan.meals.filter((m) => m.type === type).length;
+  openSheet(`<div class="sheet-head"><h2>${type}을 다르게 먹었어요</h2></div>
+    <p class="desc small">계획한 ${type} ${n}개는 '안 먹음'으로 두고, 실제로 먹은 음식만 기록해요.</p>
+    ${foodSearchHtml()}
+    <div id="rows">${mealRowEdit({ type })}</div>
+    <div class="favrow"><button class="add" id="add">+ 음식 더 추가</button><button class="add" id="favToggle">☆ 자주 먹는 음식에서 추가</button></div>
+    <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
+    <div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
+  $('#add').onclick = wireMealRows($('#rows'));
+  wireFavPanel($('#favToggle'), $('#favPanel'), $('#rows'));
+  wireFoodSearch(sheet.querySelector('.fs'), (f) => addFoodRow($('#rows'), { type, name: f.name, grams: f.grams, kcal: f.kcal }));
+  $('#save').onclick = async () => {
+    const added = readMealRows($('#rows'));
+    if (!added.length) { $('#err').textContent = '먹은 음식 이름을 입력해주세요.'; return; }
+    try { await applyMealSwap(type, added); closeSheet(); render(); } catch (e) { $('#err').textContent = authMsg(e); }
+  };
 }
 function togglePlanItem(kind, i) {
   const st = itemStatus(dayPlan[kind][i]);
@@ -418,15 +445,18 @@ function viewHome() {
   const exRows = todayPlan.exercises.map((e) => { const s = itemStatus(e);
     return `<div class="sum-row"><span class="sum-k ex">${esc(e.name)}</span><span class="mark m-${s || 'none'}">${ICON[s]}</span></div>`; }).join('');
   const exDone = todayPlan.exercises.filter((e) => ['done', 'swap'].includes(itemStatus(e))).length;
+  const mealExtraToday = (t?.meals || []).filter((x) => !x.plan);
+  const mealExtraSum = mealExtraToday.length ? `<div class="sum-row"><span class="sum-k">계획 외 음식 ${mealExtraToday.length}개</span><span class="pill s-part">계획 외</span><b>${mealExtraToday.reduce((a, x) => a + (x.kcal || 0), 0).toLocaleString()} <small>kcal</small></b></div>` : '';
   const exExtraToday = (t?.exercises || []).filter((x) => !x.plan);
   const exExtraSum = exExtraToday.length ? `<div class="sum-row"><span class="sum-k ex">추가 운동 ${exExtraToday.length}개${exExtraToday.some((x) => x.duration) ? ` · ${exExtraToday.reduce((a, x) => a + (x.duration || 0), 0)}분` : ''}</span><span class="pill s-part">계획 외</span></div>` : '';
   const planCards = items.length ? `
   <div class="card"><div class="card-title">오늘의 식단<span class="sub">${ateKcal.toLocaleString()} / ${target.toLocaleString()} kcal</span></div>
-    <div class="bar"><i style="width:${Math.min(100, Math.round((ateKcal / target) * 100))}%"></i></div>${mealRows}
+    <div class="bar"><i style="width:${Math.min(100, Math.round((ateKcal / target) * 100))}%"></i></div>${mealRows}${mealExtraSum}
     <button class="link-btn" data-gotab="meals">할일 탭에서 체크하기 ›</button></div>
   <div class="card"><div class="card-title">오늘의 운동<span class="sub">${exDone}/${todayPlan.exercises.length} 완료</span></div>
     ${exRows || '<div class="empty">오늘은 쉬는 날이에요</div>'}${exExtraSum}</div>`
-    : `<div class="card"><div class="card-title">오늘 플랜이 아직 없어요</div><p class="desc">체중에 맞춰 하루 ${target.toLocaleString()}kcal 식단과 운동 루틴을 만들어 드려요.</p><button class="btn" id="genToday">추천 플랜 받기</button></div>`;
+    : `<div class="card"><div class="card-title">오늘 플랜이 아직 없어요</div><p class="desc">체중에 맞춰 하루 ${target.toLocaleString()}kcal 식단과 운동 루틴을 만들어 드려요.</p><button class="btn" id="genToday">추천 플랜 받기</button></div>
+    ${mealExtraSum || exExtraSum ? `<div class="card"><div class="card-title">오늘 기록<span class="sub">${ateKcal.toLocaleString()} kcal 섭취</span></div>${mealExtraSum}${exExtraSum}</div>` : ''}`;
   return `
   <div class="hero">
     <div class="eyebrow">${dailyQuote()}</div>
@@ -567,11 +597,22 @@ function viewMeals() {
   const r = cache[mealDate] || {};
   const planned = dayPlan.meals.reduce((a, m) => a + (m.kcal || 0), 0);
   const ate = (r.meals || []).reduce((a, m) => a + (m.kcal || 0), 0);
+  const exIdx = (r.meals || []).map((m, i) => [m, i]).filter(([m]) => !m.plan);
+  const planTypes = new Set(dayPlan.meals.map((m) => m.type));
+  const xRow = ([m, i]) => mealRowView(m, `${mealDate}:${i}`);
   const groups = MEAL_TYPES.map((type) => {
     const rows = dayPlan.meals.map((m, i) => [m, i]).filter(([m]) => m.type === type);
-    const allSkip = rows.length && rows.every(([m]) => itemStatus(m) === 'skip');
-    return rows.length ? `<div class="mg-label mg-flex">${type}<button type="button" class="skipall${allSkip ? ' undo' : ''}" data-skipmeal="${type}">${allSkip ? '안 먹음 취소' : '안 먹었어요'}</button></div>${rows.map(([m, i]) => checkRow('meals', i, m)).join('')}` : '';
+    if (!rows.length) return '';
+    const allSkip = rows.every(([m]) => itemStatus(m) === 'skip');
+    const key = `${mealDate}|${type}`, mine = exIdx.filter(([m]) => m.type === type);
+    const head = `<div class="mg-label mg-flex">${type}<span class="mg-btns"><button type="button" class="skipall" data-swapmeal="${type}">다른 걸 먹었어요</button><button type="button" class="skipall${allSkip ? ' undo' : ''}" data-skipmeal="${type}">${allSkip ? '안 먹음 취소' : '안 먹었어요'}</button></span></div>`;
+    // when the whole meal was skipped, fold the planned items into one line (less scrolling)
+    const body = allSkip && !openMeals.has(key)
+      ? `<button type="button" class="mg-collapsed" data-expand="${key}">계획 ${rows.length}개 · 안 먹음<span>펼치기 ▾</span></button>`
+      : rows.map(([m, i]) => checkRow('meals', i, m)).join('') + (allSkip ? `<button type="button" class="mg-collapsed open" data-expand="${key}">접기 ▴</button>` : '');
+    return head + body + mine.map(xRow).join('');
   }).join('');
+  const xMealsBottom = exIdx.filter(([m]) => !planTypes.has(m.type)).map(xRow).join('');
   const extra = (r.meals || []).filter((m) => !m.plan);
   const exExtra = (r.exercises || []).filter((x) => !x.plan);
   const xMeals = (r.meals || []).map((m, i) => [m, i]).filter(([m]) => !m.plan).map(([m, i]) => mealRowView(m, `${mealDate}:${i}`)).join('');
@@ -587,7 +628,7 @@ function viewMeals() {
   return `${bar}
   <div class="card"><div class="card-title">${dateLabel(mealDate)} 식단<span class="sub">${ate.toLocaleString()} / ${planned.toLocaleString()} kcal</span></div>
     <p class="desc small">동그라미: 계획대로 먹음 · ⋯: 다른 걸 먹었거나 안 먹었을 때</p>${groups}
-    ${extra.length ? `<div class="mg-label">계획 외로 먹은 음식</div>${xMeals}` : ''}
+    ${xMealsBottom ? `<div class="mg-label">계획 외로 먹은 음식</div>${xMealsBottom}` : ''}
     <button class="link-btn" data-fooddate="${mealDate}">+ 계획에 없던 음식 기록하기</button></div>
   <div class="card"><div class="card-title">운동<span class="sub">${['일', '월', '화', '수', '목', '금', '토'][new Date(mealDate + 'T00:00:00').getDay()]}요일 루틴</span></div>
     <p class="desc small">동그라미: 계획대로 함 · ⋯: 다른 운동을 했거나 못 했을 때</p>
@@ -1366,6 +1407,8 @@ $('#view').addEventListener('click', (e) => {
   if (e.target.closest('#quickWeight')) return openWeightSheet();
   if (e.target.closest('#genToday')) return generatePlan(today).then(refresh);
   const sk = e.target.closest('[data-skipmeal]'); if (sk) return setMealSkip(sk.dataset.skipmeal);
+  const sw = e.target.closest('[data-swapmeal]'); if (sw) return openMealSwapSheet(sw.dataset.swapmeal);
+  const ex = e.target.closest('[data-expand]'); if (ex) { const k = ex.dataset.expand; if (openMeals.has(k)) openMeals.delete(k); else openMeals.add(k); return render(); }
   const t = e.target.closest('[data-date],#prev,#next,[data-metric],[data-plan],[data-recdate],#openCal,#doLogout,#planDateBtn,#startDateBtn,#favManageBtn,[data-recedit]'); if (!t) return;
   if (t.id === 'doLogout') return store.sb.auth.signOut().then(() => location.reload());
   if (t.id === 'openCal') return openDatePicker(recordDate, (d) => { recordDate = d; render(); });
