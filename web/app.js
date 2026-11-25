@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 기록 탭 아이콘·버튼 정리';
+const APP_VERSION = '2026-11-25 · 양 다름 표시 정리';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -406,11 +406,11 @@ function checkRow(kind, i, item) {
     : `<div class="li-right"><b>${detail || '–'}</b>${kc != null ? `<span class="g">${kc}kcal</span>` : ''}</div>`;
   const cat = item.category ? `<span class="tag t-${EX_CATS.indexOf(item.category)}">${esc(item.category)}</span>` : '';
   const plain = [item.grams ? `${item.grams}g` : '', item.notes ? esc(item.notes) : ''].filter(Boolean).join(' · ');
-  const sub = st === 'swap' && a.portion ? `<small class="swap-txt">양 다름 ${a.grams ? `${a.grams}g` : ''}${item.grams ? ` (계획 ${item.grams}g)` : ''}</small>`
+  const sub = st === 'swap' && a.portion ? `<small>${item.grams ? `<s>${item.grams}g</s> → ` : ''}${a.grams != null ? `${a.grams}g` : `${a.kcal}kcal`}</small>`
     : st === 'swap' ? `<small class="swap-txt">대신 ${esc(a.name)}${a.grams ? ` ${a.grams}g` : ''}</small>`
     : st === 'skip' ? `<small>${kind === 'meals' ? '안 먹음' : '못 함'}</small>`
     : plain ? `<small>${plain}</small>` : '';
-  return `<div class="check-row"><button class="check st-${st || 'none'}" data-check="${kind}:${i}"><span class="box"></span>
+  return `<div class="check-row"><button class="check st-${st === 'swap' && a.portion ? 'done st-portion' : st || 'none'}" data-check="${kind}:${i}"><span class="box"></span>
     <span class="check-body"><span class="check-name">${cat}${esc(item.name)}</span>${sub}</span>${right}</button>
     <button class="more" data-more="${kind}:${i}" aria-label="${kind === 'meals' ? '양·내용 변경' : '변경'}">${PENCIL}</button></div>`;
 }
@@ -871,7 +871,7 @@ function activityRow(date) {
 function viewMeals() {
   const r = cache[mealDate] || {};
   const planned = dayPlan.meals.reduce((a, m) => a + (m.kcal || 0), 0);
-  const ate = (r.meals || []).reduce((a, m) => a + (m.kcal || 0), 0);
+  const ate = Math.round((r.meals || []).reduce((a, m) => a + (m.kcal || 0), 0));
   const exIdx = (r.meals || []).map((m, i) => [m, i]).filter(([m]) => !m.plan);
   const planTypes = new Set(dayPlan.meals.map((m) => m.type));
   const xRow = ([m, i]) => mealRowView(m, `${mealDate}:${i}`);

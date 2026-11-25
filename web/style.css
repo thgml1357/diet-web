@@ -415,3 +415,6 @@ html{overscroll-behavior-y:contain}
 .act-row{display:flex;align-items:center;gap:12px;margin-top:12px}.act-row .btn{flex:1;margin:0}
 .del-link{flex:none;padding:12px 6px;font-size:15px;font-weight:700;color:var(--up);background:none}
 .hero2 .glow,.hero2 .shadow{z-index:0}.hero2 .ring{z-index:1}.hero2 .mascot{position:relative;z-index:2}
+
+.check.st-portion .check-name{text-decoration:none;color:var(--ink)}
+.check small s{color:var(--sub)}
