@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 음식 추가 개편(담기·합계·소수점)';
+const APP_VERSION = '2026-11-25 · 물 카드를 식단 아래로';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -605,10 +605,12 @@ function viewHome() {
   <div class="card"><div class="card-title">오늘의 식단<span class="sub">${ateKcal.toLocaleString()} / ${target.toLocaleString()} kcal</span></div>
     <div class="bar"><i style="width:${Math.min(100, Math.round((ateKcal / target) * 100))}%"></i></div>${mealRows}
     <button class="link-btn" data-gotab="meals">기록 탭에서 체크하기 ›</button></div>
+  ${checkinCard()}
   <div class="card"><div class="card-title">오늘의 운동<span class="sub">${exDone}/${todayPlan.exercises.length} 완료</span></div>
     ${exRows || '<div class="empty">오늘은 쉬는 날이에요</div>'}${exExtraSum}</div>`
     : `<div class="card"><div class="card-title">오늘 플랜이 아직 없어요</div><p class="desc">체중에 맞춰 하루 ${target.toLocaleString()}kcal 식단과 운동 루틴을 만들어 드려요.</p><button class="btn" id="genToday">추천 플랜 받기</button></div>
-    ${mealRows || exExtraSum ? `<div class="card"><div class="card-title">오늘 기록<span class="sub">${ateKcal.toLocaleString()} kcal 섭취</span></div>${mealRows}${exExtraSum}</div>` : ''}`;
+    ${mealRows || exExtraSum ? `<div class="card"><div class="card-title">오늘 기록<span class="sub">${ateKcal.toLocaleString()} kcal 섭취</span></div>${mealRows}${exExtraSum}</div>` : ''}
+    ${checkinCard()}`;
   return `
   <div class="hero">
     <div class="eyebrow">${dailyQuote()}</div>
@@ -618,7 +620,6 @@ function viewHome() {
     <button class="pill-btn" id="quickWeight">${t?.weight != null ? '오늘 체중 수정' : '오늘 체중 입력'}</button>
   </div>
   ${homeHero(items, doneN, ateKcal, target)}
-  ${checkinCard()}
   <div class="card">
     <div class="cal-head"><button id="prev">‹</button><b>${y}년 ${m + 1}월</b><button id="next">›</button></div>
     <div class="dow">${'일월화수목금토'.split('').map((d) => `<span>${d}</span>`).join('')}</div>
