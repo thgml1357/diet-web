@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 당겨서 새로고침·양 수정·변경 버튼';
+const APP_VERSION = '2026-11-25 · 음식 이름 자동완성·대체 메뉴 제거';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -370,9 +370,9 @@ function openMealSwapSheet(type) {
   const n = dayPlan.meals.filter((m) => m.type === type).length;
   openSheet(`<div class="sheet-head"><h2>${type}을 다르게 먹었어요</h2></div>
     <p class="desc small">계획한 ${type} ${n}개는 '안 먹음'으로 두고, 실제로 먹은 음식만 기록해요.</p>
-    ${foodSearchHtml()}
     <div id="rows">${mealRowEdit({ type })}</div>
-    <div class="food-actions"><button class="btn ghost" id="add">+ 음식 더 추가</button><button class="btn ghost" id="favToggle">☆ 자주 먹는 음식에서 추가</button></div>
+    <div class="food-actions"><button class="btn ghost" id="add">+ 음식 한 줄 더</button><button class="btn ghost" id="favToggle">☆ 자주 먹는 음식</button></div>
+    ${foodSearchHtml()}
     <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
     <div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
   $('#add').onclick = wireMealRows($('#rows'));
@@ -429,15 +429,14 @@ function openStatusSheet(kind, i) {
       <p class="desc small">그램을 바꾸면 칼로리가 같은 비율로 계산돼요. 칼로리는 직접 고쳐도 돼요.</p></div>` : ''}
     <div id="swapForm"${st === 'swap' && !a.portion ? '' : ' hidden'}>
       <label class="f">${isMeal ? '실제로 먹은 음식' : '실제로 한 운동'}</label>
-      <input class="in" id="aName" value="${esc(a.name ?? '')}" placeholder="${isMeal ? '예: 김밥 1줄' : '예: 실내 자전거'}">
+      <input class="in" id="aName" value="${esc(a.name ?? '')}" placeholder="${isMeal ? '음식 이름을 치면 목록이 나와요 (예: 김밥)' : '예: 실내 자전거'}" autocomplete="off">
       <div class="two" style="margin-top:8px">
         ${isMeal ? `<label class="unit-in"><input id="aG" type="number" inputmode="decimal" value="${a.grams ?? ''}" placeholder="0"><span>g</span></label>`
           : `<label class="unit-in"><input id="aMin" type="number" inputmode="numeric" value="${a.duration ?? ''}" placeholder="0"><span>분</span></label>`}
         <label class="unit-in"><input id="aK" type="number" inputmode="decimal" step="any" value="${a.kcal ?? ''}" placeholder="${isMeal ? '0' : '자동'}"><span>kcal</span></label>
       </div>
-      ${isMeal ? `<label class="f">비슷한 칼로리 대체 메뉴</label><div class="favpanel" id="aAlt">${altFoods(item).map((f, i) => `<button type="button" class="favchip" data-i="${FOODS.indexOf(f) >= 0 ? FOODS.indexOf(f) : -1}" data-n="${esc(f.name)}">${esc(f.name)} · ${f.grams ? f.grams + 'g · ' : ''}${f.kcal}kcal</button>`).join('') || '<div class="empty" style="padding:6px 0">추천할 메뉴가 없어요</div>'}</div>
-        <label class="f">음식 검색</label>${foodSearchHtml()}
-        <label class="f">즐겨찾기에서 고르기</label><div class="favpanel" id="aFav">${favChipsHtml()}</div>` : ''}
+      ${isMeal ? `<label class="f">즐겨찾기에서 고르기</label><div class="favpanel" id="aFav">${favChipsHtml()}</div>
+        ${foodSearchHtml()}` : ''}
     </div>
     ${isMeal ? '' : `<div id="liftBlock"${st === 'skip' ? ' hidden' : ''}><label class="f">사용 무게 (선택)</label>
       <label class="unit-in"><input id="lfW" type="number" step="0.5" inputmode="decimal" value="${(st === 'swap' ? a.weight : item.weight) ?? ''}" placeholder="맨몸이면 비워 두세요"><span>kg</span></label>
@@ -460,7 +459,6 @@ function openStatusSheet(kind, i) {
     if ($('#liftBlock')) $('#liftBlock').hidden = pick === 'skip';
   }; });
   const fillFood = (f) => { $('#aName').value = f.name; $('#aG').value = f.grams ?? ''; $('#aK').value = f.kcal ?? ''; };
-  if ($('#aAlt')) $('#aAlt').onclick = (e) => { const c = e.target.closest('.favchip'); if (c) fillFood(FOODS[c.dataset.i] || allFoods(true).find((f) => f.name === c.dataset.n)); };
   if (isMeal) wireFoodSearch(sheet.querySelector('.fs'), fillFood);
   if ($('#aFav')) $('#aFav').onclick = (e) => {
     const c = e.target.closest('.favchip'); if (!c) return;
@@ -1063,18 +1061,18 @@ function openFoodSheet(date) {
   const fmtK = (n) => (Number.isInteger(n) ? n : +n.toFixed(1)).toLocaleString();
   openSheet(`<div class="sheet-head"><h2>${dateLabel(date)} 음식 추가</h2></div>
     <div class="seg scroll" id="mtype">${MEAL_TYPES.map((t) => `<button type="button" data-t="${t}"${t === cur ? ' class="on"' : ''}>${t}</button>`).join('')}</div>
+    <div class="food-list-head"><b>먹은 음식 <span id="fcnt">0</span></b></div>
+    <div class="empty" id="rowsHint">음식 이름을 치면 목록이 바로 나와요</div>
+    <div id="rows" class="rows-compact">${mealRowEdit({ type: cur })}</div>
+    <div class="food-actions"><button type="button" class="btn ghost" id="add">＋ 음식 한 줄 더</button><button type="button" class="btn ghost" id="favToggle">☆ 자주 먹는 음식</button></div>
     ${foodSearchHtml()}
-    <div class="food-list-head"><b>담은 음식 <span id="fcnt">0</span></b></div>
-    <div class="empty" id="rowsHint">검색해서 누르거나, 아래 「직접 입력」으로 적어요</div>
-    <div id="rows" class="rows-compact"></div>
-    <div class="food-actions"><button type="button" class="btn ghost" id="add">＋ 직접 입력</button><button type="button" class="btn ghost" id="favToggle">☆ 자주 먹는 음식</button></div>
     <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
     <div class="err" id="err"></div>
     <div class="food-foot"><span class="food-tot">합계 <b id="ftot">0</b> kcal</span><button class="btn" id="save">저장</button></div>`);
   const box = $('#rows'), curType = () => cur;
   const upd = () => {
     const rows = [...box.querySelectorAll('.mealrow')];
-    $('#fcnt').textContent = rows.length; $('#rowsHint').hidden = rows.length > 0;
+    $('#fcnt').textContent = rows.filter((r) => r.querySelector('.f-name').value.trim()).length; $('#rowsHint').hidden = true;
     $('#ftot').textContent = fmtK(rows.reduce((a, r) => a + (Number(r.querySelector('.f-kcal').value) || 0), 0));
   };
   new MutationObserver(upd).observe(box, { childList: true });
@@ -1483,9 +1481,8 @@ function allFoods(approvedOnly) {
   return [...FOODS, ...extra];
 }
 function foodSearchHtml() {
-  return `<div class="fs"><input class="in fs-in" placeholder="🔍 음식 검색 (예: 파스타, 라떼, 치킨)">
-    <div class="fs-res favpanel"></div>
-    <button type="button" class="fs-addlink">+ 목록에 없는 음식 추가하기</button>
+  return `<div class="fs">
+    <button type="button" class="fs-addlink">+ 목록에 없는 음식 등록하기</button>
     <div class="fs-add" hidden>
       <input class="in fa-name" maxlength="36" placeholder="음식 이름 (예: 텐텐)">
       <label class="f" style="margin-top:8px">먹는 단위</label>
@@ -1497,28 +1494,9 @@ function foodSearchHtml() {
     </div></div>`;
 }
 function wireFoodSearch(root, onPick) {
-  const inp = root.querySelector('.fs-in'), res = root.querySelector('.fs-res'); const mult = 1; let ALL = allFoods();
-  const fq = (n) => (Number.isInteger(n) ? n : +n.toFixed(1));
-  const gramsOf = (f) => (f.grams ? Math.round(f.grams * mult * 10) / 10 : 0);
-  const label = (f) => (f.unit ? `${f.base} ${fq(mult)}${f.unit}` : f.name) + (f.pending ? ' (승인 대기)' : '');
-  const chip = (f, i) => `<button type="button" class="favchip" data-i="${i}">${esc(label(f))} · ${f.grams ? gramsOf(f) + 'g · ' : ''}${Math.round(f.kcal * mult)}kcal</button>`;
-  const draw = () => {
-    ALL = allFoods();
-    const q = foodNorm(inp.value);
-    if (!q) { res.innerHTML = ''; return; }
-    const hit = ALL.map((f, i) => [f, i, foodNorm(f.name).indexOf(q)]).filter((x) => x[2] >= 0).sort((a, b) => a[2] - b[2]).slice(0, 10);
-    res.innerHTML = hit.length ? (hit.some(([f]) => f.unit) ? '<div class="desc small" style="margin:0 0 6px">낱개 음식은 누를 때마다 1개씩 늘어나요</div>' : '') + hit.map(([f, i]) => chip(f, i)).join('')
-      : '<div class="empty" style="padding:6px 0">목록에 없어요. 아래 「목록에 없는 음식 추가하기」로 추가하거나 직접 적어주세요.</div>';
-  };
-  inp.oninput = draw; draw();
-  res.onclick = (e) => {
-    const c = e.target.closest('.favchip'); if (!c) return; const f = ALL[c.dataset.i];
-    onPick({ name: f.unit ? `${f.base} 1${f.unit}` : f.name, grams: gramsOf(f), kcal: Math.round(f.kcal * mult), cat: f.cat, ...(f.unit ? { ui: { base: f.base, unit: f.unit, g: f.grams || 0, k: f.kcal } } : {}) });
-    if (!f.unit) { inp.value = ''; res.innerHTML = ''; } // per-piece foods stay on screen so another tap adds one more
-  };
   // let users add foods that are missing from the list (visible to everyone after admin approval)
   const panel = root.querySelector('.fs-add'), fe = root.querySelector('.fa-err'); let cat = '간식';
-  root.querySelector('.fs-addlink').onclick = () => { panel.hidden = !panel.hidden; if (!panel.hidden) { root.querySelector('.fa-name').value = inp.value.trim(); root.querySelector('.fa-name').focus(); } };
+  root.querySelector('.fs-addlink').onclick = () => { panel.hidden = !panel.hidden; if (!panel.hidden) { root.querySelector('.fa-name').value = (sheet.querySelector('#aName, #rows .mealrow:last-child .f-name')?.value || '').trim(); root.querySelector('.fa-name').focus(); } };
   root.querySelector('.fa-cat').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; cat = b.dataset.c; root.querySelectorAll('.fa-cat button').forEach((x) => x.classList.toggle('on', x === b)); };
   root.querySelector('.fa-submit').onclick = async () => {
     let name = root.querySelector('.fa-name').value.trim(); const unit = root.querySelector('.fa-unit').value, kc = num(root.querySelector('.fa-k').value), g = num(root.querySelector('.fa-g').value);
@@ -1530,11 +1508,53 @@ function wireFoodSearch(root, onPick) {
       if (IS_ADMIN && row?.id && row.status !== 'approved') { await store.foods.review(row.id, 'approved'); row = { ...row, status: 'approved' }; }
       customFoods.push(row); fe.textContent = ''; panel.hidden = true;
       ['.fa-name', '.fa-g', '.fa-k'].forEach((c) => (root.querySelector(c).value = ''));
-      inp.value = unitOf(name).base || name; draw();
-      res.insertAdjacentHTML('afterbegin', `<div class="desc small" style="color:var(--blue);margin-bottom:6px">추가했어요${row.status === 'approved' ? '' : ' · 승인되면 모두에게 보여요'}</div>`);
+      const u = unitOf(name);
+      onPick({ name: u.unit ? `${u.base} 1${u.unit}` : name, grams: g ?? 0, kcal: kc, cat, ...(u.unit ? { ui: { base: u.base, unit: u.unit, g: g || 0, k: kc } } : {}) });
+      fe.textContent = row.status === 'approved' ? '' : '추가했어요 · 승인되면 모두에게 보여요';
     } catch (e) { fe.textContent = authMsg(e); }
   };
 }
+/* 음식 이름을 치면 바로 아래에 자동완성 목록(드롭다운)이 나와요 */
+const AC_SEL = '.mealrow:not(.exrow) .f-name, #aName';
+let acList = [];
+function acClose() { document.querySelectorAll('.ac').forEach((x) => x.remove()); }
+function acFill(inp, f) {
+  const row = inp.closest('.mealrow'), name = f.unit ? `${f.base} 1${f.unit}` : f.name, g = f.grams || '', k = Math.round(f.kcal);
+  const set = (el, v) => { if (el) el.value = v; };
+  if (row) {
+    set(row.querySelector('.f-name'), name); set(row.querySelector('.f-g'), g); set(row.querySelector('.f-kcal'), k);
+    if (f.grams > 0) row.dataset.kpg = f.kcal / f.grams; else delete row.dataset.kpg;
+    if (f.unit) { row.dataset.ui = encodeURIComponent(JSON.stringify({ base: f.base, unit: f.unit, g: f.grams || 0, k: f.kcal })); row.dataset.n = 1; } else { delete row.dataset.ui; delete row.dataset.n; }
+    row.querySelector('.f-kcal').dispatchEvent(new Event('input', { bubbles: true }));
+  } else { set(inp, name); set(document.getElementById('aG'), g); set(document.getElementById('aK'), k); }
+  acClose();
+}
+document.addEventListener('input', (e) => {
+  const inp = e.target, row = inp.closest?.('.mealrow');
+  if (row && !row.classList.contains('exrow') && inp.classList.contains('f-g') && row.dataset.kpg) { row.querySelector('.f-kcal').value = Math.round(Number(inp.value || 0) * Number(row.dataset.kpg) * 10) / 10; return; }
+  if (!inp.matches?.(AC_SEL)) return;
+  if (row?.dataset.ui) { // 낱개 음식: 이름의 숫자만 바꾸면 개수·g·kcal이 따라와요 (예: 텐텐 5개)
+    const u = JSON.parse(decodeURIComponent(row.dataset.ui)), m = inp.value.match(/^(.+?)\s*(\d+(?:\.\d+)?)\s*(\S+)$/);
+    if (m && m[1].trim() === u.base && m[3] === u.unit) {
+      const n = Number(m[2]); row.dataset.n = n; if (u.g) row.querySelector('.f-g').value = Math.round(u.g * n * 10) / 10; row.querySelector('.f-kcal').value = Math.round(u.k * n * 10) / 10;
+      row.querySelector('.f-kcal').dispatchEvent(new Event('input', { bubbles: true })); acClose(); return;
+    }
+    delete row.dataset.ui; delete row.dataset.n;
+  }
+  acClose();
+  const q = foodNorm(inp.value); if (!q) return;
+  const hit = allFoods().map((f) => [f, foodNorm(f.name).indexOf(q)]).filter((x) => x[1] >= 0).sort((a, b) => a[1] - b[1] || a[0].name.length - b[0].name.length).slice(0, 6).map((x) => x[0]);
+  if (!hit.length) return;
+  acList = hit;
+  const box = document.createElement('div'); box.className = 'ac';
+  box.innerHTML = hit.map((f, i) => `<button type="button" class="ac-i" data-ac="${i}"><b>${esc(f.unit ? `${f.base} 1${f.unit}` : f.name)}${f.pending ? ' (승인 대기)' : ''}</b><span>${f.grams ? f.grams + 'g · ' : ''}${Math.round(f.kcal)}kcal</span></button>`).join('');
+  (row ? row.querySelector('.mealrow-top') : inp).after(box);
+});
+document.addEventListener('pointerdown', (e) => {
+  const it = e.target.closest?.('[data-ac]');
+  if (it) { e.preventDefault(); const box = it.closest('.ac'), inp = box.previousElementSibling?.querySelector?.('.f-name') || box.previousElementSibling; acFill(inp, acList[Number(it.dataset.ac)]); return; }
+  if (!e.target.closest?.('.ac') && !e.target.matches?.(AC_SEL)) acClose();
+}, true);
 function addFoodRow(box, v) {
   if (v.ui) { // per-piece food: tapping again adds one more piece to the same row
     const ex = [...box.querySelectorAll('.mealrow[data-ui]')].find((r) => { const u = JSON.parse(decodeURIComponent(r.dataset.ui)); return u.base === v.ui.base && u.unit === v.ui.unit; });
@@ -1543,18 +1563,13 @@ function addFoodRow(box, v) {
   const rows = box.querySelectorAll('.mealrow'), last = rows[rows.length - 1];
   if (last && !last.querySelector('.f-name').value.trim()) last.outerHTML = mealRowEdit(v); else box.insertAdjacentHTML('beforeend', mealRowEdit(v));
 }
-function altFoods(item) {
-  const k = item.kcal || 200, snack = item.type === '간식' || item.type === '야식';
-  return allFoods(true).filter((f) => (snack ? SNACKISH.includes(f.cat) : ['식사', '외식'].includes(f.cat)) && f.name !== item.name && Math.abs(f.kcal - k) <= Math.max(60, k * 0.25))
-    .sort((a, b) => Math.abs(a.kcal - k) - Math.abs(b.kcal - k)).slice(0, 8);
-}
 function mealRowEdit(v = {}, opts = {}) {
   const on = v.name && isFavorite(v.name);
   const star = opts.star === false ? '' : `<button type="button" class="favstar${on ? ' on' : ''}" title="즐겨찾기에 저장">${on ? '★' : '☆'}</button>`;
   return `<div class="mealrow" data-plan="${v.plan ? 1 : ''}" ${stAttrs(v)}${v.grams > 0 && v.kcal != null ? ` data-kpg="${v.kcal / v.grams}"` : ''}${v.ui ? ` data-ui="${encodeURIComponent(JSON.stringify(v.ui))}" data-n="1"` : ''}>
     <div class="mealrow-top">
       <select class="in sel-type">${MEAL_TYPES.map((t) => `<option${v.type === t ? ' selected' : ''}>${t}</option>`).join('')}</select>
-      <input class="in f-name" placeholder="음식명" value="${esc(v.name ?? '')}">
+      <input class="in f-name" placeholder="음식명 (치면 목록이 나와요)" autocomplete="off" value="${esc(v.name ?? '')}">
       ${star}<button type="button" class="rm" aria-label="삭제">✕</button>
     </div>
     <div class="mealrow-bottom">
@@ -1727,8 +1742,9 @@ function renderPicker() {
 
 async function editPlanMeals() {
   const rows = (planData.meals || []).map((x) => mealRowEdit(x)).join('');
-  openSheet(`<div class="sheet-head"><h2>${dateLabel(planDate)} 식단 계획</h2></div>${foodSearchHtml()}<div id="rows">${rows}</div>
+  openSheet(`<div class="sheet-head"><h2>${dateLabel(planDate)} 식단 계획</h2></div><div id="rows">${rows}</div>
   <div class="food-actions"><button class="btn ghost" id="add">+ 추가</button><button class="btn ghost" id="favToggle">☆ 즐겨찾기에서 추가</button></div>
+  ${foodSearchHtml()}
   <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
   <div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
   $('#add').onclick = wireMealRows($('#rows'));

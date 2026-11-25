@@ -397,3 +397,11 @@ html{overscroll-behavior-y:contain}
 #ptr.show{opacity:.92}
 #pChips{display:flex;gap:6px;flex-wrap:wrap}#pChips button{flex:1;min-width:48px;padding:9px 0;border-radius:10px;background:var(--bg);font-size:13px;font-weight:700;color:var(--ink)}
 #pChips button:active{background:var(--blue-bg);color:var(--blue)}
+
+/* 음식 이름 자동완성 드롭다운 */
+.mealrow{position:relative}
+.ac{position:absolute;left:10px;right:10px;z-index:30;margin-top:2px;background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.14);overflow:hidden}
+.ac-i{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;padding:12px 14px;text-align:left;font-size:14px;border-bottom:1px solid #f2f4f6;background:#fff}
+.ac-i:last-child{border-bottom:0}.ac-i:active{background:var(--blue-bg)}.ac-i b{font-weight:600;color:var(--ink)}.ac-i span{font-size:12px;color:var(--sub);white-space:nowrap}
+#aName + .ac{position:static;margin:2px 0 8px}
+.fs{margin:8px 0}
