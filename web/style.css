@@ -255,3 +255,5 @@ body.sheet-open{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 .tour-note{position:fixed;inset:0;z-index:61;background:rgba(10,14,22,.6);display:flex;align-items:center;justify-content:center;padding:20px}
 .tour-card{background:#fff;border-radius:20px;padding:22px;max-width:340px;width:100%;text-align:center}.tour-card p{margin:8px 0 16px;color:var(--ink2);line-height:1.55}
 .readonly #tourBtn{display:none!important}
+
+.touring .sheet{max-height:60vh!important}
