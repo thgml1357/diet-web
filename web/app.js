@@ -39,6 +39,11 @@ function localStore() {
     save: async (rec) => { const m = get('records'); m[rec.date] = { ...m[rec.date], ...rec }; set('records', m); },
     remove: async (date) => { const m = get('records'); delete m[date]; set('records', m); },
     meals: plan('mealPlans', 'meals'), exercises: plan('exPlans', 'exercises'),
+    foods: {
+      list: async () => { try { return JSON.parse(localStorage.getItem('diet.customFoods')) || []; } catch { return []; } },
+      add: async (f) => { const l = JSON.parse(localStorage.getItem('diet.customFoods') || '[]'); const r = { id: 'l' + Date.now(), ...f, status: 'approved' }; l.push(r); localStorage.setItem('diet.customFoods', JSON.stringify(l)); return r; },
+      pending: async () => [], review: async () => {},
+    },
     favorites: {
       get: async () => { try { return JSON.parse(localStorage.getItem('diet.favorites')) || []; } catch { return []; } },
       save: async (list) => localStorage.setItem('diet.favorites', JSON.stringify(list)),
@@ -61,6 +66,12 @@ async function supabaseStore() {
     save: async (rec) => ok(await sb.from('daily_records').upsert({ ...rec, user_id: await uid() }, { onConflict: 'user_id,date' })),
     remove: async (date) => ok(await sb.from('daily_records').delete().eq('date', date)),
     meals: plan('meal_plans', 'meals'), exercises: plan('exercise_plans', 'exercises'),
+    foods: {
+      list: async () => ok(await sb.from('food_submissions').select('id,name,grams,kcal,cat,status,user_id').neq('status', 'rejected').order('created_at')),
+      add: async (f) => ok(await sb.from('food_submissions').insert(f).select().single()),
+      pending: async () => ok(await sb.from('food_submissions').select('id,name,grams,kcal,cat,user_id').eq('status', 'pending').order('created_at')),
+      review: async (id, status) => ok(await sb.from('food_submissions').update({ status }).eq('id', id)),
+    },
     favorites: {
       get: async () => ok(await sb.from('users').select('favorites').eq('id', await uid()).maybeSingle())?.favorites || [],
       save: async (list) => ok(await sb.from('users').update({ favorites: list }).eq('id', await uid())),
@@ -69,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 끼니 통째 변경 + 요약 반영';
+const APP_VERSION = '2026-11-25 · 체크 탭 + 음식 추가·승인';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -81,6 +92,7 @@ function shareStore(D) {
     mode: 'share', label: '공유 보기',
     range: async (from, to) => Object.values(recs).filter((r) => r.date >= from && r.date <= to).sort((a, b) => a.date.localeCompare(b.date)),
     save: deny, remove: deny, meals: plan('meals'), exercises: plan('exercises'),
+    foods: { list: async () => [], add: deny, pending: async () => [], review: deny },
     favorites: { get: async () => [], save: deny },
   };
 }
@@ -121,7 +133,7 @@ function mealRowView(m, x) {
   const g = m.grams ? `<span class="g">${m.grams}g</span>` : '';
   const favdata = encodeURIComponent(JSON.stringify({ name: m.name, grams: m.grams ?? null, kcal: m.kcal ?? null }));
   const on = isFavorite(m.name);
-  return `<div class="li"><div class="li-left"><button type="button" class="favmini${on ? ' on' : ''}" title="즐겨찾기에 저장" data-favitem="${favdata}">${on ? '★' : '☆'}</button><div class="li-name">${x ? '<span class="tag t-x">계획 외</span>' : ''}${esc(m.name)}${g}</div></div><b class="kcal">${m.kcal ?? '–'} kcal</b>${x ? `<button class="more" data-xmeal="${x}" aria-label="수정·삭제">⋯</button>` : ''}</div>`;
+  return `<div class="li"><div class="li-left"><button type="button" class="favmini${on ? ' on' : ''}" title="즐겨찾기에 저장" data-favitem="${favdata}">${on ? '★' : '☆'}</button><div class="li-name">${x && x !== 'plain' ? '<span class="tag t-x">추가</span>' : ''}${esc(m.name)}${g}</div></div><b class="kcal">${m.kcal ?? '–'} kcal</b>${x ? `<button class="more" data-xmeal="${x}" aria-label="수정·삭제">⋯</button>` : ''}</div>`;
 }
 async function favMiniClick(btn) {
   try {
@@ -364,7 +376,7 @@ function openStatusSheet(kind, i) {
           : `<label class="unit-in"><input id="aMin" type="number" inputmode="numeric" value="${a.duration ?? ''}" placeholder="0"><span>분</span></label>`}
         <label class="unit-in"><input id="aK" type="number" inputmode="numeric" value="${a.kcal ?? ''}" placeholder="${isMeal ? '0' : '자동'}"><span>kcal</span></label>
       </div>
-      ${isMeal ? `<label class="f">비슷한 칼로리 대체 메뉴</label><div class="favpanel" id="aAlt">${altFoods(item).map((f, i) => `<button type="button" class="favchip" data-i="${FOODS.indexOf(f)}">${esc(f.name)} · ${f.kcal}kcal</button>`).join('') || '<div class="empty" style="padding:6px 0">추천할 메뉴가 없어요</div>'}</div>
+      ${isMeal ? `<label class="f">비슷한 칼로리 대체 메뉴</label><div class="favpanel" id="aAlt">${altFoods(item).map((f, i) => `<button type="button" class="favchip" data-i="${FOODS.indexOf(f) >= 0 ? FOODS.indexOf(f) : -1}" data-n="${esc(f.name)}">${esc(f.name)} · ${f.kcal}kcal</button>`).join('') || '<div class="empty" style="padding:6px 0">추천할 메뉴가 없어요</div>'}</div>
         <label class="f">음식 검색</label>${foodSearchHtml()}
         <label class="f">즐겨찾기에서 고르기</label><div class="favpanel" id="aFav">${favChipsHtml()}</div>` : ''}
     </div>
@@ -378,7 +390,7 @@ function openStatusSheet(kind, i) {
     $('#swapForm').hidden = pick !== 'swap';
   }; });
   const fillFood = (f) => { $('#aName').value = f.name; $('#aG').value = f.grams ?? ''; $('#aK').value = f.kcal ?? ''; };
-  if ($('#aAlt')) $('#aAlt').onclick = (e) => { const c = e.target.closest('.favchip'); if (c) fillFood(FOODS[c.dataset.i]); };
+  if ($('#aAlt')) $('#aAlt').onclick = (e) => { const c = e.target.closest('.favchip'); if (c) fillFood(FOODS[c.dataset.i] || allFoods(true).find((f) => f.name === c.dataset.n)); };
   if (isMeal) wireFoodSearch(sheet.querySelector('.fs'), fillFood);
   if ($('#aFav')) $('#aFav').onclick = (e) => {
     const c = e.target.closest('.favchip'); if (!c) return;
@@ -433,30 +445,33 @@ function viewHome() {
   const pct = items.length ? Math.round((doneN / items.length) * 100) : 0;
   const ateKcal = (t?.meals || []).reduce((a, x) => a + (x.kcal || 0), 0);
   const ICON = { done: '✓', swap: '↔', skip: '–', '': '' };
-  const mealRows = MEAL_TYPES.map((type) => {
-    const ms = todayPlan.meals.filter((m) => m.type === type); if (!ms.length) return '';
+  const mealExtraToday = (t?.meals || []).filter((x) => !x.plan);
+  const sumRow = (type, ms, xs) => {
+    if (!ms.length && !xs.length) return '';
+    const xk = xs.reduce((a, m) => a + (m.kcal || 0), 0);
+    if (!ms.length) return `<div class="sum-row"><span class="sum-k">${type}</span><span class="pill s-done">기록</span><b>${xk.toLocaleString()} <small>kcal</small></b></div>`;
     const sts = ms.map(itemStatus), left = sts.filter((x) => !x).length;
     const planned = ms.reduce((a, m) => a + (m.kcal || 0), 0);
-    const ate = ms.reduce((a, m) => a + (actualOf(m, 'meals')?.kcal || 0), 0);
-    const [txt, cls] = left === ms.length ? ['아직', 'wait'] : left ? [`${ms.length - left}/${ms.length} 체크`, 'part']
-      : sts.every((x) => x === 'done') ? ['계획대로', 'done'] : sts.every((x) => x === 'skip') ? ['안 먹음', 'skip'] : ['다르게 먹음', 'swap'];
-    return `<div class="sum-row"><span class="sum-k">${type}</span><span class="pill s-${cls}">${txt}</span><b>${left === ms.length ? '–' : ate.toLocaleString()} <small>/ ${planned.toLocaleString()} kcal</small></b></div>`;
-  }).join('');
+    const ate = ms.reduce((a, m) => a + (actualOf(m, 'meals')?.kcal || 0), 0) + xk;
+    const [txt, cls] = left === ms.length ? (xs.length ? ['추가 기록', 'part'] : ['아직', 'wait']) : left ? [`${ms.length - left}/${ms.length} 체크`, 'part']
+      : sts.every((x) => x === 'done') ? ['계획대로', 'done'] : sts.every((x) => x === 'skip') ? (xs.length ? ['다르게 먹음', 'swap'] : ['안 먹음', 'skip']) : ['다르게 먹음', 'swap'];
+    return `<div class="sum-row"><span class="sum-k">${type}</span><span class="pill s-${cls}">${txt}</span><b>${left === ms.length && !xs.length ? '–' : ate.toLocaleString()} <small>/ ${planned.toLocaleString()} kcal</small></b></div>`;
+  };
+  const mealRows = MEAL_TYPES.map((type) => sumRow(type, todayPlan.meals.filter((m) => m.type === type), mealExtraToday.filter((m) => m.type === type))).join('')
+    + sumRow('기타', [], mealExtraToday.filter((m) => !MEAL_TYPES.includes(m.type)));
   const exRows = todayPlan.exercises.map((e) => { const s = itemStatus(e);
     return `<div class="sum-row"><span class="sum-k ex">${esc(e.name)}</span><span class="mark m-${s || 'none'}">${ICON[s]}</span></div>`; }).join('');
   const exDone = todayPlan.exercises.filter((e) => ['done', 'swap'].includes(itemStatus(e))).length;
-  const mealExtraToday = (t?.meals || []).filter((x) => !x.plan);
-  const mealExtraSum = mealExtraToday.length ? `<div class="sum-row"><span class="sum-k">계획 외 음식 ${mealExtraToday.length}개</span><span class="pill s-part">계획 외</span><b>${mealExtraToday.reduce((a, x) => a + (x.kcal || 0), 0).toLocaleString()} <small>kcal</small></b></div>` : '';
   const exExtraToday = (t?.exercises || []).filter((x) => !x.plan);
   const exExtraSum = exExtraToday.length ? `<div class="sum-row"><span class="sum-k ex">추가 운동 ${exExtraToday.length}개${exExtraToday.some((x) => x.duration) ? ` · ${exExtraToday.reduce((a, x) => a + (x.duration || 0), 0)}분` : ''}</span><span class="pill s-part">계획 외</span></div>` : '';
   const planCards = items.length ? `
   <div class="card"><div class="card-title">오늘의 식단<span class="sub">${ateKcal.toLocaleString()} / ${target.toLocaleString()} kcal</span></div>
-    <div class="bar"><i style="width:${Math.min(100, Math.round((ateKcal / target) * 100))}%"></i></div>${mealRows}${mealExtraSum}
-    <button class="link-btn" data-gotab="meals">할일 탭에서 체크하기 ›</button></div>
+    <div class="bar"><i style="width:${Math.min(100, Math.round((ateKcal / target) * 100))}%"></i></div>${mealRows}
+    <button class="link-btn" data-gotab="meals">체크 탭에서 체크하기 ›</button></div>
   <div class="card"><div class="card-title">오늘의 운동<span class="sub">${exDone}/${todayPlan.exercises.length} 완료</span></div>
     ${exRows || '<div class="empty">오늘은 쉬는 날이에요</div>'}${exExtraSum}</div>`
     : `<div class="card"><div class="card-title">오늘 플랜이 아직 없어요</div><p class="desc">체중에 맞춰 하루 ${target.toLocaleString()}kcal 식단과 운동 루틴을 만들어 드려요.</p><button class="btn" id="genToday">추천 플랜 받기</button></div>
-    ${mealExtraSum || exExtraSum ? `<div class="card"><div class="card-title">오늘 기록<span class="sub">${ateKcal.toLocaleString()} kcal 섭취</span></div>${mealExtraSum}${exExtraSum}</div>` : ''}`;
+    ${mealRows || exExtraSum ? `<div class="card"><div class="card-title">오늘 기록<span class="sub">${ateKcal.toLocaleString()} kcal 섭취</span></div>${mealRows}${exExtraSum}</div>` : ''}`;
   return `
   <div class="hero">
     <div class="eyebrow">${dailyQuote()}</div>
@@ -466,7 +481,7 @@ function viewHome() {
     <button class="pill-btn" id="quickWeight">${t?.weight != null ? '오늘 체중 수정' : '오늘 체중 입력'}</button>
   </div>
   ${items.length ? `<div class="card"><div class="card-title">오늘 할 일<span class="sub">${doneN}/${items.length} 완료</span></div><div class="bar"><i style="width:${pct}%"></i></div>
-    <p class="desc">${pct === 100 ? '오늘 플랜을 모두 해냈어요! 🎉' : (READONLY ? '할일 탭에서 항목별로 볼 수 있어요.' : '할일 탭에서 체크하면 기록에 자동으로 반영돼요.')}</p></div>` : ''}
+    <p class="desc">${pct === 100 ? '오늘 플랜을 모두 해냈어요! 🎉' : (READONLY ? '체크 탭에서 항목별로 볼 수 있어요.' : '체크 탭에서 체크하면 기록에 자동으로 반영돼요.')}</p></div>` : ''}
   <div class="card">
     <div class="cal-head"><button id="prev">‹</button><b>${y}년 ${m + 1}월</b><button id="next">›</button></div>
     <div class="dow">${'일월화수목금토'.split('').map((d) => `<span>${d}</span>`).join('')}</div>
@@ -600,6 +615,7 @@ function viewMeals() {
   const exIdx = (r.meals || []).map((m, i) => [m, i]).filter(([m]) => !m.plan);
   const planTypes = new Set(dayPlan.meals.map((m) => m.type));
   const xRow = ([m, i]) => mealRowView(m, `${mealDate}:${i}`);
+  const xRowPlain = ([m, i]) => mealRowView(m, `${mealDate}:${i}`).replace('<span class="tag t-x">추가</span>', '');
   const groups = MEAL_TYPES.map((type) => {
     const rows = dayPlan.meals.map((m, i) => [m, i]).filter(([m]) => m.type === type);
     if (!rows.length) return '';
@@ -612,7 +628,8 @@ function viewMeals() {
       : rows.map(([m, i]) => checkRow('meals', i, m)).join('') + (allSkip ? `<button type="button" class="mg-collapsed open" data-expand="${key}">접기 ▴</button>` : '');
     return head + body + mine.map(xRow).join('');
   }).join('');
-  const xMealsBottom = exIdx.filter(([m]) => !planTypes.has(m.type)).map(xRow).join('');
+  const bottomTypes = [...MEAL_TYPES, '기타'].filter((t) => !planTypes.has(t));
+  const xMealsBottom = bottomTypes.map((t) => { const rows = exIdx.filter(([m]) => (MEAL_TYPES.includes(m.type) ? m.type : '기타') === t); return rows.length ? `<div class="mg-label">${t}</div>${rows.map(xRowPlain).join('')}` : ''; }).join('');
   const extra = (r.meals || []).filter((m) => !m.plan);
   const exExtra = (r.exercises || []).filter((x) => !x.plan);
   const xMeals = (r.meals || []).map((m, i) => [m, i]).filter(([m]) => !m.plan).map(([m, i]) => mealRowView(m, `${mealDate}:${i}`)).join('');
@@ -628,7 +645,7 @@ function viewMeals() {
   return `${bar}
   <div class="card"><div class="card-title">${dateLabel(mealDate)} 식단<span class="sub">${ate.toLocaleString()} / ${planned.toLocaleString()} kcal</span></div>
     <p class="desc small">동그라미: 계획대로 먹음 · ⋯: 다른 걸 먹었거나 안 먹었을 때</p>${groups}
-    ${xMealsBottom ? `<div class="mg-label">계획 외로 먹은 음식</div>${xMealsBottom}` : ''}
+    ${xMealsBottom}
     <button class="link-btn" data-fooddate="${mealDate}">+ 계획에 없던 음식 기록하기</button></div>
   <div class="card"><div class="card-title">운동<span class="sub">${['일', '월', '화', '수', '목', '금', '토'][new Date(mealDate + 'T00:00:00').getDay()]}요일 루틴</span></div>
     <p class="desc small">동그라미: 계획대로 함 · ⋯: 다른 운동을 했거나 못 했을 때</p>
@@ -706,6 +723,7 @@ function viewSettings() {
     <div class="eyebrow">운동 경험</div>
     <div class="seg" style="margin:6px 0 4px">${[['new', '처음'], ['some', '가끔'], ['steady', '꾸준히']].map(([v, t]) => `<button class="${(PROFILE?.level || 'new') === v ? 'on' : ''}" data-level="${v}">${t}</button>`).join('')}</div>
     <p class="desc small" style="margin:0 0 16px">운동 장소·허리·경험은 추천 플랜을 새로 받을 때부터 적용돼요.</p>
+    ${IS_ADMIN ? `<div class="eyebrow">관리자</div><button type="button" class="in daterow" id="foodAdminBtn" style="margin:6px 0 16px">음식 승인 대기 (${pendingFoodCount})<span class="chev">›</span></button>` : ''}
     <div class="eyebrow">도움말</div>
     <button type="button" class="in daterow" id="tourBtn" style="margin:6px 0 16px">사용방법 보기<span class="chev">›</span></button>
     <div class="eyebrow">모드</div><div style="margin:6px 0 16px">${store?.label || ''}</div>
@@ -897,6 +915,7 @@ const FOODS = `
 감자 1개 (삶은)|130|100|식사
 옥수수 1개|150|130|식사
 바나나 1개|100|90|간식
+텐텐 1개(낱개)|4|17|간식
 사과 1개|200|100|간식
 귤 1개|80|35|간식
 오렌지 1개|150|70|간식
@@ -1043,18 +1062,36 @@ const FOODS = `
 
 const SNACKISH = ['간식', '음료', '디저트'];
 const foodNorm = (t) => t.toLowerCase().replace(/\s+/g, '');
+let customFoods = [], IS_ADMIN = false, MY_UID = null, pendingFoodCount = 0;
+const FOOD_CATS = ['식사', '외식', '간식', '음료', '디저트'];
+// base list + approved foods + my own pending submissions
+function allFoods(approvedOnly) {
+  const names = new Set(FOODS.map((f) => f.name));
+  const extra = customFoods.filter((f) => !names.has(f.name) && (f.status === 'approved' || (!approvedOnly && f.user_id === MY_UID)))
+    .map((f) => ({ name: f.name + (f.status === 'pending' ? ' (승인 대기)' : ''), grams: Number(f.grams) || 0, kcal: Number(f.kcal), cat: f.cat }));
+  return [...FOODS, ...extra];
+}
 function foodSearchHtml() {
   return `<div class="fs"><input class="in fs-in" placeholder="🔍 음식 검색 (예: 파스타, 라떼, 치킨)">
     <div class="seg fs-mult">${[0.5, 1, 1.5, 2].map((m) => `<button type="button" data-m="${m}"${m === 1 ? ' class="on"' : ''}>${m === 1 ? '1인분' : m + '배'}</button>`).join('')}</div>
-    <div class="fs-res favpanel"></div></div>`;
+    <div class="fs-res favpanel"></div>
+    <button type="button" class="fs-addlink">+ 목록에 없는 음식 추가하기</button>
+    <div class="fs-add" hidden>
+      <input class="in fa-name" maxlength="40" placeholder="음식 이름 (예: 텐텐 1개)">
+      <div class="two" style="margin-top:8px"><label class="unit-in"><input class="fa-g" type="number" inputmode="decimal" placeholder="0"><span>g</span></label><label class="unit-in"><input class="fa-k" type="number" inputmode="numeric" placeholder="0"><span>kcal</span></label></div>
+      <div class="seg scroll fa-cat" style="margin-top:8px">${FOOD_CATS.map((c, i) => `<button type="button" data-c="${c}"${i === 2 ? ' class="on"' : ''}>${c}</button>`).join('')}</div>
+      <p class="desc small" style="margin:4px 0 8px">1회 먹는 양(낱개면 1개) 기준으로 적어요. 관리자가 승인하면 모든 사용자의 검색에 보여요. 승인 전에는 나만 볼 수 있어요.</p>
+      <button type="button" class="btn fa-submit">목록에 추가</button><div class="err fa-err"></div>
+    </div></div>`;
 }
 function wireFoodSearch(root, onPick) {
-  const inp = root.querySelector('.fs-in'), res = root.querySelector('.fs-res'); let mult = 1;
+  const inp = root.querySelector('.fs-in'), res = root.querySelector('.fs-res'); let mult = 1, ALL = allFoods();
   const draw = () => {
+    ALL = allFoods();
     const q = foodNorm(inp.value); if (!q) { res.innerHTML = ''; return; }
-    const hit = FOODS.map((f, i) => [f, i, foodNorm(f.name).indexOf(q)]).filter((x) => x[2] >= 0).sort((a, b) => a[2] - b[2]).slice(0, 10);
+    const hit = ALL.map((f, i) => [f, i, foodNorm(f.name).indexOf(q)]).filter((x) => x[2] >= 0).sort((a, b) => a[2] - b[2]).slice(0, 10);
     res.innerHTML = hit.length ? hit.map(([f, i]) => `<button type="button" class="favchip" data-i="${i}">${esc(f.name)} · ${Math.round(f.kcal * mult)}kcal</button>`).join('')
-      : '<div class="empty" style="padding:6px 0">목록에 없어요. 아래에 직접 적어주세요.</div>';
+      : '<div class="empty" style="padding:6px 0">목록에 없어요. 아래 「목록에 없는 음식 추가하기」로 추가하거나 직접 적어주세요.</div>';
   };
   inp.oninput = draw;
   root.querySelector('.fs-mult').onclick = (e) => {
@@ -1062,9 +1099,26 @@ function wireFoodSearch(root, onPick) {
     root.querySelectorAll('.fs-mult button').forEach((x) => x.classList.toggle('on', x === b)); draw();
   };
   res.onclick = (e) => {
-    const c = e.target.closest('.favchip'); if (!c) return; const f = FOODS[c.dataset.i];
+    const c = e.target.closest('.favchip'); if (!c) return; const f = ALL[c.dataset.i];
     onPick({ name: f.name, grams: Math.round(f.grams * mult), kcal: Math.round(f.kcal * mult), cat: f.cat });
     inp.value = ''; res.innerHTML = '';
+  };
+  // let users add foods that are missing from the list (visible to everyone after admin approval)
+  const panel = root.querySelector('.fs-add'), fe = root.querySelector('.fa-err'); let cat = '간식';
+  root.querySelector('.fs-addlink').onclick = () => { panel.hidden = !panel.hidden; if (!panel.hidden) { root.querySelector('.fa-name').value = inp.value.trim(); root.querySelector('.fa-name').focus(); } };
+  root.querySelector('.fa-cat').onclick = (e) => { const b = e.target.closest('button'); if (!b) return; cat = b.dataset.c; root.querySelectorAll('.fa-cat button').forEach((x) => x.classList.toggle('on', x === b)); };
+  root.querySelector('.fa-submit').onclick = async () => {
+    const name = root.querySelector('.fa-name').value.trim(), kc = num(root.querySelector('.fa-k').value), g = num(root.querySelector('.fa-g').value);
+    if (!name) { fe.textContent = '음식 이름을 입력해 주세요.'; return; }
+    if (kc == null || kc < 0 || kc > 3000) { fe.textContent = 'kcal를 0~3000 사이로 입력해 주세요.'; return; }
+    try {
+      let row = await store.foods.add({ name, grams: g, kcal: kc, cat });
+      if (IS_ADMIN && row?.id && row.status !== 'approved') { await store.foods.review(row.id, 'approved'); row = { ...row, status: 'approved' }; }
+      customFoods.push(row); fe.textContent = ''; panel.hidden = true;
+      ['.fa-name', '.fa-g', '.fa-k'].forEach((c) => (root.querySelector(c).value = ''));
+      inp.value = name; draw();
+      res.insertAdjacentHTML('afterbegin', `<div class="desc small" style="color:var(--blue);margin-bottom:6px">추가했어요${row.status === 'approved' ? '' : ' · 승인되면 모두에게 보여요'}</div>`);
+    } catch (e) { fe.textContent = authMsg(e); }
   };
 }
 function addFoodRow(box, v) {
@@ -1073,7 +1127,7 @@ function addFoodRow(box, v) {
 }
 function altFoods(item) {
   const k = item.kcal || 200, snack = item.type === '간식' || item.type === '야식';
-  return FOODS.filter((f) => (snack ? SNACKISH.includes(f.cat) : ['식사', '외식'].includes(f.cat)) && f.name !== item.name && Math.abs(f.kcal - k) <= Math.max(60, k * 0.25))
+  return allFoods(true).filter((f) => (snack ? SNACKISH.includes(f.cat) : ['식사', '외식'].includes(f.cat)) && f.name !== item.name && Math.abs(f.kcal - k) <= Math.max(60, k * 0.25))
     .sort((a, b) => Math.abs(a.kcal - k) - Math.abs(b.kcal - k)).slice(0, 8);
 }
 function mealRowEdit(v = {}, opts = {}) {
@@ -1370,7 +1424,7 @@ async function refresh() { await loadAll(); await loadToday(); if (tab === 'plan
 function render() {
   const v = $('#view');
   v.innerHTML = { home: viewHome, meals: viewMeals, record: viewRecord, stats: viewStats, plan: viewPlan, settings: viewSettings }[tab]();
-  $('#title').textContent = { home: '오늘', meals: '할일', record: '기록', stats: '통계', plan: '계획', settings: '설정' }[tab];
+  $('#title').textContent = { home: '오늘', meals: '체크', record: '기록', stats: '통계', plan: '계획', settings: '설정' }[tab];
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
   if (tab === 'record' || tab === 'meals') wireWeekSwipe($('.weekbar'));
 }
@@ -1684,6 +1738,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('#shareBtn')) return openShareSheet();
   if (e.target.closest('#goalBtn')) return openGoalSheet();
   if (e.target.closest('#tourBtn')) return startTour();
+  if (e.target.closest('#foodAdminBtn')) return openFoodAdminSheet();
   const yb = e.target.closest('[data-yt]');
   if (yb) { yb.outerHTML = `<div class="yt"><iframe src="https://www.youtube-nocookie.com/embed/${yb.dataset.yt}?playsinline=1&autoplay=1&rel=0&modestbranding=1" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`; return; }
   const t = e.target.closest('[data-exinfo]'); if (t) openExerciseGuide(t.dataset.exinfo);
@@ -1714,6 +1769,20 @@ function openExtraExSheet(x) {
   $('#del').onclick = () => { if (confirm('이 운동 기록을 삭제할까요?')) put(r.exercises.filter((_, k) => k !== i)); };
 }
 
+async function openFoodAdminSheet() {
+  let list = [];
+  try { list = await store.foods.pending(); } catch (e) {}
+  pendingFoodCount = list.length;
+  openSheet(`<div class="sheet-head"><h2>음식 승인 대기</h2></div>
+    <p class="desc small">승인하면 모든 사용자의 음식 검색에 나와요. 값이 이상하면 거절하세요.</p>
+    ${list.length ? list.map((f) => `<div class="li"><div class="li-left"><div><span class="li-name">${esc(f.name)}</span><small>${f.grams ? f.grams + 'g · ' : ''}${f.kcal}kcal · ${esc(f.cat)}</small></div></div>
+      <span class="mg-btns"><button class="skipall" data-fa="${f.id}:approved">승인</button><button class="skipall undo" data-fa="${f.id}:rejected">거절</button></span></div>`).join('') : '<div class="empty">대기 중인 음식이 없어요</div>'}
+    <div class="err" id="err"></div>`);
+  sheet.querySelectorAll('[data-fa]').forEach((b) => { b.onclick = async () => {
+    const [id, st] = b.dataset.fa.split(':');
+    try { await store.foods.review(id, st); if (st === 'approved') customFoods = await store.foods.list(); openFoodAdminSheet(); render(); } catch (e) { $('#err').textContent = authMsg(e); }
+  }; });
+}
 function shareBase() {
   if (CFG.SHARE_BASE) return CFG.SHARE_BASE;
   return /^https?:$/.test(location.protocol) && !/^(localhost|127\.|192\.168\.|10\.)/.test(location.hostname) ? location.origin + location.pathname : null;
@@ -1776,7 +1845,7 @@ const TOUR = [
   { tab: 'home', sel: TOUR_TAB('home'), tap: true, title: '오늘 탭', text: '오늘 체중과 할 일 진행률을 한눈에 보는 곳이에요. 빛나는 버튼을 눌러보세요!' },
   { tab: 'home', sel: '#quickWeight', tap: true, title: '체중 입력', text: '아침 공복에 체중을 입력해요. 눌러서 입력창을 열어볼까요?' },
   { sheet: true, title: '체중 입력창', text: '체중을 적고 저장하면 오늘 기록에 들어가요. 체중이 쌓이면 감량 속도를 분석해서 식단과 운동을 자동으로 맞춰드려요. (지금은 저장하지 않아도 돼요)' },
-  { tab: 'home', sel: TOUR_TAB('meals'), tap: true, title: '할일 탭', text: '오늘 먹을 식단과 할 운동이 여기 있어요. 눌러보세요!' },
+  { tab: 'home', sel: TOUR_TAB('meals'), tap: true, title: '체크 탭', text: '오늘 먹을 식단과 할 운동이 여기 있어요. 눌러보세요!' },
   { tab: 'meals', sel: '.check-row .box', title: '체크하기', text: '계획대로 먹거나 운동했다면 동그라미를 눌러 체크해요. 기록에 자동으로 반영돼요.' },
   { tab: 'meals', sel: '.check-row .more', title: '다르게 했을 때', text: '⋯ 버튼: 다른 걸 먹었거나 안 먹었을 때, 대신 한 운동이 있을 때 눌러요. 계획은 그대로 남아요.' },
   { tab: 'meals', sel: '[data-fooddate]', tap: true, title: '계획에 없던 음식', text: '간식이나 외식처럼 계획에 없던 음식은 여기서 추가해요. 눌러볼까요?' },
@@ -1890,7 +1959,7 @@ function startTour() {
       store = await supabaseStore();
       const { data } = await store.sb.auth.getSession();
       if (!data.session) return showLogin(store.sb);
-      accountLabel = data.session.user.email;
+      accountLabel = data.session.user.email; MY_UID = data.session.user.id;
       const { data: urow } = await store.sb.from('users').select('start_date').eq('id', data.session.user.id).maybeSingle();
       if (urow?.start_date) START = urow.start_date;
       const { data: hrow } = await store.sb.from('users').select('height').eq('id', data.session.user.id).maybeSingle(); // null until 0004 migration
@@ -1907,6 +1976,8 @@ function startTour() {
     }
     $('#modeChip').textContent = store.label;
     favorites = await store.favorites.get();
+    if (!READONLY) { try { customFoods = await store.foods.list(); } catch {} }
+    if (store.mode === 'supabase') { try { const { data: a } = await store.sb.from('users').select('is_admin').eq('id', MY_UID).maybeSingle(); IS_ADMIN = !!a?.is_admin; if (IS_ADMIN) pendingFoodCount = (await store.foods.pending()).length; } catch {} }
     if (!READONLY) { await loadProfile(); if (!PROFILE && !(await store.range('2000-01-01', '2100-01-01')).length) return showOnboarding(); }
     await refresh();
     if (!READONLY && PROFILE?.tour === 'pending') setTimeout(startTour, 500);
