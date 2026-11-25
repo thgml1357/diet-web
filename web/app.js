@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 운동 무게·느낌 기록';
+const APP_VERSION = '2026-11-25 · 운동 편집 접기·순서 변경';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -749,7 +749,7 @@ function openExerciseSheet(date) {
   $('#quick').onclick = (e) => { const b = e.target.closest('[data-q]'); if (!b) return; const [name, category] = EX_QUICK[b.dataset.q];
     const first = $('#rows .exrow'); if (first && !first.querySelector('.f-name').value.trim()) first.remove();
     $('#rows').insertAdjacentHTML('beforeend', exRowEdit({ category, name })); };
-  $('#rows').onclick = (e) => { if (e.target.classList.contains('rm')) e.target.closest('.exrow').remove(); };
+  wireExRows($('#rows'));
   $('#save').onclick = async () => {
     const added = readExRows($('#rows')).map(({ done, ...x }) => x);
     if (!added.length) { $('#err').textContent = '운동 이름을 입력해주세요.'; return; }
@@ -913,6 +913,7 @@ sheet.addEventListener('click', (e) => { const fav = e.target.closest('.favmini'
   let startY = null, dragging = false, fromHandle = false;
   sheet.addEventListener('touchstart', (e) => {
     startY = e.touches[0].clientY;
+    if (e.target.closest('.drag')) { startY = null; return; }
     fromHandle = !!e.target.closest('.sheet-handle');
     dragging = fromHandle; // content-drag decided on first move
     if (fromHandle) sheet.style.transition = 'none';
@@ -1227,7 +1228,7 @@ function altFoods(item) {
 function mealRowEdit(v = {}, opts = {}) {
   const on = v.name && isFavorite(v.name);
   const star = opts.star === false ? '' : `<button type="button" class="favstar${on ? ' on' : ''}" title="즐겨찾기에 저장">${on ? '★' : '☆'}</button>`;
-  return `<div class="mealrow" data-plan="${v.plan ? 1 : ''}">
+  return `<div class="mealrow" data-plan="${v.plan ? 1 : ''}" ${stAttrs(v)}>
     <div class="mealrow-top">
       <select class="in sel-type">${MEAL_TYPES.map((t) => `<option${v.type === t ? ' selected' : ''}>${t}</option>`).join('')}</select>
       <input class="in f-name" placeholder="음식명" value="${esc(v.name ?? '')}">
@@ -1246,6 +1247,8 @@ function readMealRows(box) {
     grams: row.querySelector('.f-g').value === '' ? null : Number(row.querySelector('.f-g').value),
     kcal: row.querySelector('.f-kcal').value === '' ? null : Number(row.querySelector('.f-kcal').value),
     ...(row.dataset.plan ? { plan: true } : {}),
+    ...(row.dataset.st ? { st: row.dataset.st, done: row.dataset.st === 'done' } : {}),
+    ...(row.dataset.actual ? { actual: JSON.parse(decodeURIComponent(row.dataset.actual)) } : {}),
   })).filter((o) => o.name);
 }
 async function addFavorite(item) {
@@ -1350,13 +1353,13 @@ function renderEdit(date) {
   <label class="f">식사</label><div id="meals">${(r.meals || []).map((m) => mealRowEdit(m)).join('')}</div>
   <div class="favrow"><button class="add" id="addMeal">+ 식사 추가</button><button class="add" id="favToggle">☆ 즐겨찾기에서 추가</button></div>
   <div class="favpanel" id="favPanel" hidden>${favChipsHtml()}</div>
-  <label class="f">운동</label><div id="exs">${(r.exercises || []).map((e) => exRowEdit(e)).join('')}</div><button class="add" id="addEx">+ 운동 추가</button>
+  <label class="f">운동</label><div id="exs">${(r.exercises || []).map((e) => exRowEdit(e, { collapsed: true })).join('')}</div><button class="add" id="addEx">+ 운동 추가</button>
   <div class="err" id="err"></div>
   <button class="btn" id="save">저장</button>${cache[date] ? '<button class="btn danger" id="del">기록 삭제</button>' : ''}`);
   $('#addMeal').onclick = wireMealRows($('#meals'));
   wireFavPanel($('#favToggle'), $('#favPanel'), $('#meals'));
   $('#addEx').onclick = () => $('#exs').insertAdjacentHTML('beforeend', exRowEdit({ category: '유산소' }));
-  $('#exs').onclick = (e) => { if (e.target.classList.contains('rm')) e.target.closest('.exrow').remove(); };
+  wireExRows($('#exs'));
   const doSave = async () => {
     const meals = readMealRows($('#meals'));
     const exercises = readExRows($('#exs')).map(({ done, ...e }) => e);
@@ -1444,34 +1447,69 @@ function renderFavoritesEdit() {
   $('#save').onclick = doSave;
   $('#headSaveFav').onclick = doSave;
 }
-function exRowEdit(v = {}) {
-  return `<div class="mealrow exrow" data-done="${v.done ? 1 : ''}" data-plan="${v.plan ? 1 : ''}" data-feel="${v.feel || ''}">
-    <div class="mealrow-top"><select class="in sel-cat">${EX_CATS.map((c) => `<option${v.category === c ? ' selected' : ''}>${c}</option>`).join('')}</select>
-      <input class="in f-name" placeholder="운동명" value="${esc(v.name ?? '')}"><span></span><button type="button" class="rm" aria-label="삭제">✕</button></div>
-    <div class="mealrow-bottom four">
-      <label class="unit-in"><input class="f-min" type="number" inputmode="numeric" placeholder="0" value="${v.duration ?? ''}"><span>분</span></label>
-      <label class="unit-in"><input class="f-sets" type="number" inputmode="numeric" placeholder="0" value="${v.sets ?? ''}"><span>세트</span></label>
-      <label class="unit-in"><input class="f-reps" placeholder="12회" value="${esc(v.reps ?? '')}"></label>
-      <label class="unit-in"><input class="f-kcal" type="number" inputmode="numeric" placeholder="자동" value="${v.kcal ?? ''}"><span>kcal</span></label>
+const stAttrs = (v) => `data-st="${v.st || ''}" data-actual="${v.actual ? encodeURIComponent(JSON.stringify(v.actual)) : ''}"`; // keep check-off state when a plan is edited
+function exRowEdit(v = {}, o = {}) {
+  const ci = EX_CATS.indexOf(v.category);
+  return `<div class="mealrow exrow${o.collapsed ? ' collapsed' : ''}" data-done="${v.done ? 1 : ''}" data-plan="${v.plan ? 1 : ''}" data-feel="${v.feel || ''}" ${stAttrs(v)}>
+    <div class="exsum"><button type="button" class="drag" aria-label="순서 바꾸기">≡</button>
+      <button type="button" class="exopen"><span class="tag t-${ci}">${esc(v.category || '')}</span><b>${esc(v.name || '')}</b><small>${esc(exDetail(v))}</small><i>▾</i></button>
+      <button type="button" class="rm" aria-label="삭제">✕</button></div>
+    <div class="exfull">
+      <div class="mealrow-top exhead"><button type="button" class="drag" aria-label="순서 바꾸기">≡</button>
+        <select class="in sel-cat">${EX_CATS.map((c) => `<option${v.category === c ? ' selected' : ''}>${c}</option>`).join('')}</select>
+        <input class="in f-name" placeholder="운동명" value="${esc(v.name ?? '')}"><button type="button" class="exfold" aria-label="접기">▴</button><button type="button" class="rm" aria-label="삭제">✕</button></div>
+      <div class="mealrow-bottom four">
+        <label class="unit-in"><input class="f-min" type="number" inputmode="numeric" placeholder="0" value="${v.duration ?? ''}"><span>분</span></label>
+        <label class="unit-in"><input class="f-sets" type="number" inputmode="numeric" placeholder="0" value="${v.sets ?? ''}"><span>세트</span></label>
+        <label class="unit-in"><input class="f-w" type="number" step="0.5" inputmode="decimal" placeholder="0" value="${v.weight ?? ''}"><span>kg</span></label>
+        <label class="unit-in"><input class="f-kcal" type="number" inputmode="numeric" placeholder="자동" value="${v.kcal ?? ''}"><span>kcal</span></label>
+      </div>
+      <div class="exrow2"><input class="in f-reps" placeholder="횟수 (12회)" value="${esc(v.reps ?? '')}">
+        <textarea class="in f-notes" rows="3" placeholder="메모 (자세, 속도, 느낌 등)">${esc(v.notes ?? '')}</textarea></div>
     </div>
-    <div class="two" style="margin-top:8px"><label class="unit-in"><input class="f-w" type="number" step="0.5" inputmode="decimal" placeholder="무게" value="${v.weight ?? ''}"><span>kg</span></label>
-      <input class="in f-notes" placeholder="메모 (자세, 속도 등)" value="${esc(v.notes ?? '')}" style="height:46px;font-size:14px"></div>
   </div>`;
 }
-function readExRows(box) {
-  return [...box.querySelectorAll('.exrow')].map((row) => {
-    const q = (c) => row.querySelector(c).value.trim();
-    const name = q('.f-name'), duration = num(q('.f-min')), sets = num(q('.f-sets'));
-    const e = { category: q('.sel-cat'), name, duration, sets, reps: q('.f-reps') || null, kcal: num(q('.f-kcal')), notes: q('.f-notes') || null, ...(num(q('.f-w')) ? { weight: num(q('.f-w')) } : {}), ...(row.dataset.feel ? { feel: row.dataset.feel } : {}), done: !!row.dataset.done, ...(row.dataset.plan ? { plan: true } : {}) };
-    if (e.kcal == null) e.kcal = estimateExerciseKcal(name, duration || (sets ? sets * 2 : null)) ?? (e.category === '근력' && sets ? sets * 8 : null);
-    return e;
-  }).filter((e) => e.name);
+function readExRow(row) {
+  const q = (c) => row.querySelector(c).value.trim();
+  const name = q('.f-name'), duration = num(q('.f-min')), sets = num(q('.f-sets'));
+  const e = { category: q('.sel-cat'), name, duration, sets, reps: q('.f-reps') || null, kcal: num(q('.f-kcal')), notes: q('.f-notes') || null, ...(num(q('.f-w')) ? { weight: num(q('.f-w')) } : {}), ...(row.dataset.feel ? { feel: row.dataset.feel } : {}), done: !!row.dataset.done, ...(row.dataset.plan ? { plan: true } : {}),
+    ...(row.dataset.st ? { st: row.dataset.st } : {}), ...(row.dataset.actual ? { actual: JSON.parse(decodeURIComponent(row.dataset.actual)) } : {}) };
+  if (e.kcal == null) e.kcal = estimateExerciseKcal(name, duration || (sets ? sets * 2 : null)) ?? (e.category === '근력' && sets ? sets * 8 : null);
+  return e;
+}
+const readExRows = (box) => [...box.querySelectorAll('.exrow')].map(readExRow).filter((e) => e.name);
+// fold / unfold rows, delete, and drag-to-reorder (grab the ≡ handle)
+function wireExRows(box) {
+  box.onclick = (e) => {
+    const row = e.target.closest('.exrow'); if (!row) return;
+    if (e.target.closest('.rm')) return row.remove();
+    if (e.target.closest('.exopen')) return row.classList.remove('collapsed');
+    if (e.target.closest('.exfold')) {
+      const v = readExRow(row), sum = row.querySelector('.exopen');
+      sum.querySelector('.tag').textContent = v.category; sum.querySelector('.tag').className = `tag t-${EX_CATS.indexOf(v.category)}`;
+      sum.querySelector('b').textContent = v.name || '(이름 없음)'; sum.querySelector('small').textContent = exDetail(v);
+      row.classList.add('collapsed');
+    }
+  };
+  box.addEventListener('pointerdown', (e) => {
+    const h = e.target.closest('.drag'); if (!h) return;
+    const row = h.closest('.exrow'); e.preventDefault(); row.classList.add('dragging');
+    const move = (ev) => {
+      const rect = sheet.getBoundingClientRect();
+      if (ev.clientY < rect.top + 70) sheet.scrollTop -= 10; else if (ev.clientY > rect.bottom - 70) sheet.scrollTop += 10;
+      let before = null;
+      for (const r of box.querySelectorAll('.exrow')) { if (r === row) continue; const b = r.getBoundingClientRect(); if (ev.clientY < b.top + b.height / 2) { before = r; break; } }
+      box.insertBefore(row, before);
+    };
+    const up = () => { row.classList.remove('dragging'); window.removeEventListener('pointermove', move); window.removeEventListener('pointerup', up); window.removeEventListener('pointercancel', up); };
+    window.addEventListener('pointermove', move); window.addEventListener('pointerup', up); window.addEventListener('pointercancel', up);
+  });
 }
 async function editPlanExercises() {
-  const rows = (planData.exercises || []).map((x) => exRowEdit(x)).join('');
-  openSheet(`<div class="sheet-head"><h2>${dateLabel(planDate)} 운동 계획</h2></div><div id="rows">${rows}</div><button class="add" id="add">+ 추가</button><div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
+  const rows = (planData.exercises || []).map((x) => exRowEdit(x, { collapsed: true })).join('');
+  openSheet(`<div class="sheet-head"><h2>${dateLabel(planDate)} 운동 계획</h2></div><p class="desc small">탭하면 펼쳐져요 · ≡를 잡고 끌어서 순서를 바꿔요.</p><div id="rows">${rows}</div><button class="add" id="add">+ 추가</button><div class="err" id="err"></div><button class="btn" id="save">저장</button>`);
   $('#add').onclick = () => $('#rows').insertAdjacentHTML('beforeend', exRowEdit({ category: '유산소' }));
-  $('#rows').onclick = (e) => { if (e.target.classList.contains('rm')) e.target.closest('.exrow').remove(); };
+  wireExRows($('#rows'));
   $('#save').onclick = async () => {
     try {
       const exercises = readExRows($('#rows'));
@@ -1866,7 +1904,7 @@ function openExtraExSheet(x) {
   const [date, i] = [x.slice(0, 10), Number(x.slice(11))], r = cache[date] || {}, e = (r.exercises || [])[i]; if (!e) return;
   openSheet(`<div class="sheet-head"><h2>${dateLabel(date)} 운동 수정</h2></div><div id="rows">${exRowEdit(e)}</div>
     <div class="err" id="err"></div><button class="btn" id="save">저장</button><button class="btn ghost" id="del" style="color:var(--up)">삭제</button>`);
-  sheet.querySelectorAll('.rm').forEach((b) => b.remove());
+  sheet.querySelectorAll('.rm, .drag, .exfold').forEach((b) => b.remove());
   const put = async (exercises) => {
     const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: calcBurn({ ...r, exercises }) ?? r.calories_burned ?? null, meals: r.meals || [], exercises };
     try { await store.save(rec); closeSheet(); await refresh(); } catch (er) { $('#err').textContent = authMsg(er); }
