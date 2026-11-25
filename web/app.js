@@ -69,7 +69,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 설정 직접입력 + 사용방법 안내';
+const APP_VERSION = '2026-11-25 · 사용방법 안내 v2 (입력창 밝게)';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -1727,21 +1727,29 @@ const TOUR_TAB = (t) => `.tabs [data-tab="${t}"]`;
 const TOUR = [
   { center: true, title: '환영해요! 👋', text: '처음이시죠? 앱 사용법을 직접 눌러보며 알려드릴게요.\n\n건너뛰어도 괜찮아요. 설정 탭의 「사용방법 보기」에서 언제든 다시 볼 수 있어요.' },
   { tab: 'home', sel: TOUR_TAB('home'), tap: true, title: '오늘 탭', text: '오늘 체중과 할 일 진행률을 한눈에 보는 곳이에요. 빛나는 버튼을 눌러보세요!' },
-  { tab: 'home', sel: '#quickWeight', title: '체중 입력', text: '아침 공복에 여기서 체중을 입력해요. 체중이 쌓이면 감량 속도를 분석해서 식단과 운동을 자동으로 맞춰드려요.' },
+  { tab: 'home', sel: '#quickWeight', tap: true, title: '체중 입력', text: '아침 공복에 체중을 입력해요. 눌러서 입력창을 열어볼까요?' },
+  { sheet: true, title: '체중 입력창', text: '체중을 적고 저장하면 오늘 기록에 들어가요. 체중이 쌓이면 감량 속도를 분석해서 식단과 운동을 자동으로 맞춰드려요. (지금은 저장하지 않아도 돼요)' },
   { tab: 'home', sel: TOUR_TAB('meals'), tap: true, title: '할일 탭', text: '오늘 먹을 식단과 할 운동이 여기 있어요. 눌러보세요!' },
   { tab: 'meals', sel: '.check-row .box', title: '체크하기', text: '계획대로 먹거나 운동했다면 동그라미를 눌러 체크해요. 기록에 자동으로 반영돼요.' },
   { tab: 'meals', sel: '.check-row .more', title: '다르게 했을 때', text: '⋯ 버튼: 다른 걸 먹었거나 안 먹었을 때, 대신 한 운동이 있을 때 눌러요. 계획은 그대로 남아요.' },
-  { tab: 'meals', sel: '[data-fooddate]', title: '계획에 없던 음식', text: '간식이나 외식처럼 계획에 없던 음식은 여기서 추가해요. 이름을 검색하면 칼로리가 자동으로 채워져요.' },
+  { tab: 'meals', sel: '[data-fooddate]', tap: true, title: '계획에 없던 음식', text: '간식이나 외식처럼 계획에 없던 음식은 여기서 추가해요. 눌러볼까요?' },
+  { sheet: true, title: '음식 추가창', text: '음식 이름을 검색하면 칼로리가 자동으로 채워져요. 0.5배·1.5배로 양도 조절하고, 자주 먹는 음식은 즐겨찾기에서 골라요. (지금은 저장하지 않아도 돼요)' },
   { tab: 'meals', sel: TOUR_TAB('record'), tap: true, title: '기록 탭', text: '날짜별 체중·식단·운동과 인바디를 모아보는 곳이에요. 눌러보세요!' },
-  { tab: 'record', sel: '#openCal', title: '날짜 고르기', text: '달력 아이콘으로 원하는 날짜로 바로 이동해요. 인바디를 잰 날은 IN 표시가 붙어요.' },
+  { tab: 'record', sel: '[data-recedit]', tap: true, title: '기록 입력', text: '체중, 걸음 수, 식사, 운동을 날짜별로 한 번에 입력하는 곳이에요. 「편집」을 눌러보세요!' },
+  { sheet: true, title: '기록 입력창', text: '이 창에서 그날의 체중·걸음·먹은 것·운동을 한꺼번에 적어요. 날짜를 지난 기록도 같은 방법으로 고칠 수 있어요. (지금은 저장하지 않아도 돼요)' },
+  { tab: 'record', sel: '#openCal', tap: true, title: '날짜 고르기', text: '달력 아이콘을 눌러 원하는 날짜로 바로 이동해요. 눌러보세요!' },
+  { sheet: true, title: '달력', text: '날짜를 누르면 그날 기록으로 이동해요. 인바디를 잰 날은 IN 표시가 붙어 있어요.' },
   { tab: 'record', sel: TOUR_TAB('stats'), tap: true, title: '통계 탭', text: '체중과 섭취·소모 칼로리 그래프, 인바디 변화를 봐요. 눌러보세요!' },
   { tab: 'stats', sel: TOUR_TAB('plan'), tap: true, title: '계획 탭', text: '앞으로의 식단·운동 계획과 체중 추이 분석이 있어요. 눌러보세요!' },
-  { tab: 'plan', sel: '.exinfo', title: '운동 설명', text: '운동 항목을 누르면 하는 방법과 영상이 나와요. 처음 하는 운동도 따라 할 수 있어요.' },
+  { tab: 'plan', sel: '.exinfo', tap: true, title: '운동 설명', text: '운동 항목을 누르면 하는 방법과 영상이 나와요. 눌러볼까요?' },
+  { sheet: true, title: '운동 방법·영상', text: '자극 부위와 따라 하는 순서, 자세 팁이 나와요. 영상 썸네일을 누르면 바로 재생돼요.' },
   { tab: 'plan', sel: TOUR_TAB('settings'), tap: true, title: '설정 탭', text: '목표 체중, 키, 운동 장소를 바꾸고 기록을 공유할 수 있어요. 눌러보세요!' },
   { tab: 'settings', sel: '#tourBtn', title: '다시 보기', text: '이 사용방법은 여기서 언제든 다시 볼 수 있어요. 이제 시작해볼까요? 🎉', last: true },
 ];
+
 let tourEl = null;
 function endTour(skipped) {
+  closeSheet();
   if (tourEl) { tourEl.remove(); tourEl = null; }
   document.body.classList.remove('touring');
   saveProfilePatch({ tour: 'done' });
@@ -1767,10 +1775,12 @@ function startTour() {
     tourEl.classList.toggle('notarget', !target);
     if (!target) { set(q('.tm-t'), 0, 0, W, H); set(q('.tm-b'), 0, 0, 0, 0); set(q('.tm-l'), 0, 0, 0, 0); set(q('.tm-r'), 0, 0, 0, 0); q('.tring').style.display = 'none';
       Object.assign(card.style, { left: '50%', top: '50%', transform: 'translate(-50%,-50%)', bottom: 'auto' }); return; }
-    const r = target.getBoundingClientRect(), pad = 6, x = r.left - pad, y = r.top - pad, w = r.width + pad * 2, h = r.height + pad * 2;
+    const r = target.getBoundingClientRect(), pad = st.sheet ? 0 : 6, x = r.left - pad, y = r.top - pad, w = r.width + pad * 2, h = r.height + pad * 2;
     set(q('.tm-t'), 0, 0, W, y); set(q('.tm-b'), 0, y + h, W, H - y - h); set(q('.tm-l'), 0, y, x, h); set(q('.tm-r'), x + w, y, W - x - w, h);
     const ring = q('.tring'); ring.style.display = 'block'; set(ring, x, y, w, h);
     ring.style.borderRadius = (parseFloat(getComputedStyle(target).borderTopLeftRadius) || 10) + pad + 'px';
+    ring.style.pointerEvents = st.tap ? 'none' : 'auto'; // only 'tap' steps let clicks through the hole
+    if (st.sheet) { Object.assign(card.style, { left: '50%', transform: 'translateX(-50%)', top: 'calc(env(safe-area-inset-top) + 14px)', bottom: 'auto' }); return; }
     const below = y + h + 16 + 190 < H; // room under the target?
     Object.assign(card.style, { left: '50%', transform: 'translateX(-50%)', top: below ? Math.min(y + h + 14, H - 210) + 'px' : 'auto', bottom: below ? 'auto' : (H - y + 14) + 'px' });
   };
@@ -1785,6 +1795,8 @@ function startTour() {
     const my = ++token;
     while (n < TOUR.length) {
       const st = TOUR[n];
+      if (st.sheet) { if (sheet.hidden) { n++; continue; } target = sheet; await new Promise((r) => setTimeout(r, 250)); break; }
+      closeSheet();
       if (st.tab && tab !== st.tab) { const b = document.querySelector(TOUR_TAB(st.tab)); if (b) b.click(); await new Promise((r) => setTimeout(r, 450)); }
       if (!st.sel) { target = null; break; }
       const el = document.querySelector(st.sel);
