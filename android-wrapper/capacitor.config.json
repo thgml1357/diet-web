@@ -1,0 +1,12 @@
+{
+  "appId": "com.sohee.diet",
+  "appName": "다이어트 기록",
+  "webDir": "www",
+  "server": {
+    "url": "https://thgml1357.github.io/diet-web/",
+    "cleartext": false
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}
