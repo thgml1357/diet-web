@@ -68,10 +68,10 @@ h2.sec{font-size:18px;margin:18px 4px 10px}
 .mealgroup:first-child .mg-label{border-top:0;padding-top:0}
 .li .g{color:var(--sub);font-size:12px;margin-left:6px;background:#f2f4f6;border-radius:6px;padding:1px 6px}
 .li b.kcal{color:var(--ink2);font-weight:600;white-space:nowrap;flex-shrink:0}
-.li-right{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:3px}
+.li-right{text-align:right;display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none;margin-left:auto}
 .li-right .g{margin-left:0}
 .li-left{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
-.li-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.li-name{min-width:0;overflow-wrap:anywhere;word-break:keep-all;line-height:1.35}
 .favmini{color:var(--sub);font-size:15px;background:none;border:0;padding:2px;flex-shrink:0}
 .favmini.on{color:#f2b600}
 .daterow{display:flex;align-items:center;justify-content:space-between;text-align:left}
@@ -257,3 +257,7 @@ body.sheet-open{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 .readonly #tourBtn{display:none!important}
 
 .touring .sheet{max-height:60vh!important}
+
+.li-left>div{min-width:0}
+.li b.kcal{margin-left:auto;padding-left:8px}
+.li-right b{white-space:nowrap;line-height:1.3}
