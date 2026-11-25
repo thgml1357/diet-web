@@ -282,3 +282,5 @@ body.sheet-open{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 
 .act-row label.auto{flex:1.25;color:var(--sub)}.act-row label.auto b{flex:1;text-align:right;font-size:15px;font-weight:700;color:var(--ink)}
 .act-row label.auto span{white-space:nowrap}
+
+.lift-hist{display:flex;flex-wrap:wrap;gap:6px;margin:4px 0}.lift-hist span{background:#f2f4f6;border-radius:10px;padding:5px 9px;font-size:13px;color:var(--sub)}.lift-hist b{color:var(--ink)}

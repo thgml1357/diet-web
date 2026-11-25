@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-25 · 소모 칼로리 자동 계산';
+const APP_VERSION = '2026-11-25 · 운동 무게·느낌 기록';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -148,6 +148,7 @@ function exDetail(e) {
   if (e.sets) p.push(`${e.sets}세트${e.reps ? ` × ${e.reps}` : ''}`);
   else if (e.reps) p.push(String(e.reps));
   if (e.duration) p.push(`${e.duration}분`);
+  if (e.weight) p.push(`${e.weight}kg`);
   return p.join(' · ');
 }
 function exRowView(e, x) {
@@ -304,10 +305,45 @@ async function syncRecordFromPlan(date, plan) {
   await store.save(rec);
   cache[date] = { ...r, ...rec };
 }
-async function setItemStatus(kind, i, st, actual) {
+/* ---- strength log: weight + how it felt, progressive overload hints ---- */
+const FEELS = [['easy', '쉬웠어요'], ['ok', '적당해요'], ['hard', '힘들었어요']];
+const mmdd = (d) => `${d.slice(5, 7)}/${d.slice(8)}`;
+function liftHistory(name) {
+  const out = [];
+  recs().forEach((r) => (r.exercises || []).forEach((e) => { if ((e.name === name || e.planned === name) && Number(e.weight) > 0) out.push({ date: r.date, weight: Number(e.weight), feel: e.feel, sets: e.sets, reps: e.reps }); }));
+  return out.sort((a, b) => b.date.localeCompare(a.date));
+}
+// last session + a modest next-step suggestion (raise when it felt easy or two sessions in a row were not hard)
+function liftSuggest(name) {
+  const l = liftHistory(name).filter((x) => x.date !== mealDate); if (!l.length) return null;
+  const a = l[0], inc = a.weight >= 10 ? 2.5 : 1;
+  let next = a.weight, note = '같은 무게로 한 번 더';
+  if (a.feel === 'hard') note = '힘들었으니 같은 무게로 자세 먼저';
+  else if (a.feel === 'easy' || (l[1] && l[1].weight === a.weight && l[1].feel !== 'hard')) { next = a.weight + inc; note = '올릴 타이밍이에요'; }
+  return { last: a, next, note };
+}
+const feelHtml = (cur, id = 'lfFeel') => `<div class="seg" id="${id}">${FEELS.map(([v, t]) => `<button type="button" data-f="${v}"${v === (cur || 'ok') ? ' class="on"' : ''}>${t}</button>`).join('')}</div>`;
+const pickedFeel = (id = 'lfFeel') => sheet.querySelector(`#${id} .on`)?.dataset.f || 'ok';
+function wireFeel(id = 'lfFeel') { const box = sheet.querySelector('#' + id); box.onclick = (e) => { const b = e.target.closest('button'); if (!b) return; box.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b)); }; }
+function openLiftSheet(i) {
+  const item = dayPlan.exercises[i], sg = liftSuggest(item.name);
+  openSheet(`<div class="sheet-head"><h2>${esc(item.name)}</h2></div>
+    <p class="desc small">${esc(exDetail(item))} · 사용한 무게를 남겨두면 다음에 조금씩 올릴 때 참고해요.</p>
+    ${sg ? `<button type="button" class="favchip" id="lfSug">지난번 ${sg.last.weight}kg (${mmdd(sg.last.date)}) → 이번엔 ${sg.next}kg · ${sg.note}</button>` : ''}
+    <label class="unit-in big-in" style="margin-top:10px"><input id="lfW" type="number" step="0.5" inputmode="decimal" value="${sg ? sg.last.weight : ''}" placeholder="맨몸이면 비워 두세요"><span>kg</span></label>
+    <label class="f">운동하니 어땠나요?</label>${feelHtml('ok')}
+    <button class="btn" id="lfSave">완료</button>`);
+  wireFeel();
+  if ($('#lfSug')) $('#lfSug').onclick = () => { $('#lfW').value = sg.next; };
+  $('#lfSave').onclick = async () => {
+    const w = num($('#lfW').value), extra = { ...(w ? { weight: w } : {}), feel: pickedFeel() };
+    closeSheet(); try { await setItemStatus('exercises', i, 'done', null, extra); } catch (e) { alert(authMsg(e)); }
+  };
+}
+async function setItemStatus(kind, i, st, actual, extra) {
   const list = dayPlan[kind];
-  const { st: _s, actual: _a, done: _d, ...base } = list[i];
-  list[i] = { ...base, ...(st ? { st } : {}), done: st === 'done', ...(st === 'swap' && actual ? { actual } : {}) };
+  const { st: _s, actual: _a, done: _d, weight: _w, feel: _f, ...base } = list[i]; // old lift data is dropped and re-added from `extra`
+  list[i] = { ...base, ...(st ? { st } : {}), done: st === 'done', ...(st === 'done' && extra ? extra : {}), ...(st === 'swap' && actual ? { actual } : {}) };
   await store[kind].save(mealDate, list);
   await syncRecordFromPlan(mealDate, dayPlan);
   if (mealDate === today) todayPlan = dayPlan;
@@ -351,6 +387,7 @@ function openMealSwapSheet(type) {
 function togglePlanItem(kind, i) {
   const st = itemStatus(dayPlan[kind][i]);
   if (st === 'swap' || st === 'skip') return openStatusSheet(kind, i);
+  if (kind === 'exercises' && !st && dayPlan.exercises[i].category === '근력') return openLiftSheet(i);
   return setItemStatus(kind, i, st ? '' : 'done', null);
 }
 function checkRow(kind, i, item) {
@@ -392,14 +429,19 @@ function openStatusSheet(kind, i) {
         <label class="f">음식 검색</label>${foodSearchHtml()}
         <label class="f">즐겨찾기에서 고르기</label><div class="favpanel" id="aFav">${favChipsHtml()}</div>` : ''}
     </div>
+    ${isMeal ? '' : `<div id="liftBlock"${st === 'skip' ? ' hidden' : ''}><label class="f">사용 무게 (선택)</label>
+      <label class="unit-in"><input id="lfW" type="number" step="0.5" inputmode="decimal" value="${(st === 'swap' ? a.weight : item.weight) ?? ''}" placeholder="맨몸이면 비워 두세요"><span>kg</span></label>
+      <div style="margin-top:8px">${feelHtml((st === 'swap' ? a.feel : item.feel) || 'ok')}</div></div>`}
     <div class="err" id="err"></div>
     <button class="btn" id="stSave">저장</button>
     ${st ? '<button class="btn ghost" id="stClear">이 기록 지우기</button>' : ''}`);
+  if (!isMeal) wireFeel();
   let pick = st || 'done';
   sheet.querySelectorAll('[data-st]').forEach((b) => { b.onclick = () => {
     pick = b.dataset.st;
     sheet.querySelectorAll('[data-st]').forEach((x) => x.classList.toggle('on', x === b));
     $('#swapForm').hidden = pick !== 'swap';
+    if ($('#liftBlock')) $('#liftBlock').hidden = pick === 'skip';
   }; });
   const fillFood = (f) => { $('#aName').value = f.name; $('#aG').value = f.grams ?? ''; $('#aK').value = f.kcal ?? ''; };
   if ($('#aAlt')) $('#aAlt').onclick = (e) => { const c = e.target.closest('.favchip'); if (c) fillFood(FOODS[c.dataset.i] || allFoods(true).find((f) => f.name === c.dataset.n)); };
@@ -414,10 +456,12 @@ function openStatusSheet(kind, i) {
       const name = $('#aName').value.trim();
       if (!name) { $('#err').textContent = isMeal ? '대신 먹은 음식을 입력해주세요.' : '대신 한 운동을 입력해주세요.'; return; }
       if (isMeal) actual = { name, grams: num($('#aG').value), kcal: num($('#aK').value) };
-      else { const duration = num($('#aMin').value); actual = { name, duration, kcal: num($('#aK').value) ?? estimateExerciseKcal(name, duration) }; }
+      else { const duration = num($('#aMin').value), w = num($('#lfW').value); actual = { name, duration, kcal: num($('#aK').value) ?? estimateExerciseKcal(name, duration), ...(w ? { weight: w } : {}), feel: pickedFeel() }; }
     }
+    const lw = !isMeal && pick === 'done' ? num($('#lfW').value) : null;
+    const extra = !isMeal && pick === 'done' ? { ...(lw ? { weight: lw } : {}), feel: pickedFeel() } : undefined;
     closeSheet();
-    try { await setItemStatus(kind, i, pick, actual); } catch (e) { alert(authMsg(e)); }
+    try { await setItemStatus(kind, i, pick, actual, extra); } catch (e) { alert(authMsg(e)); }
   };
   if ($('#stClear')) $('#stClear').onclick = async () => { closeSheet(); await setItemStatus(kind, i, '', null); };
 }
@@ -602,7 +646,11 @@ function viewStats() {
       ${ser.length ? lineChart(ser.map(([r]) => r), (r) => ibCalc(r.inbody)[ibMetric], (v) => ibFmt(v, f[3])) : '<div class="empty">값이 없어요</div>'}
       <div class="ib-hist">${ibs.slice().reverse().map((r) => { const c = ibCalc(r.inbody); return `<button class="li" data-ibdate="${r.date}"><span>${dateLabel(r.date)}</span><span class="g">체지방 ${ibFmt(c.fat_pct, 1)}% · 골격근 ${ibFmt(c.smm, 2)}kg</span></button>`; }).join('')}</div></div>`;
   }
-  return `<div class="card"><div class="eyebrow">시작일(${dateLabel(START)}) 이후 · ${meta[metric][1]}</div><div class="seg" style="margin-top:12px">${seg}</div>${body}</div>${ibCard}`;
+  const lifts = {};
+  recs().forEach((r) => (r.exercises || []).forEach((e) => { const n = e.planned || e.name; if (Number(e.weight) > 0) (lifts[n] = lifts[n] || []).push({ d: r.date, w: Number(e.weight) }); }));
+  const liftRows = Object.entries(lifts).map(([n, l]) => ({ n, first: l[0].w, last: l[l.length - 1].w, cnt: l.length, d: l[l.length - 1].d })).sort((a, b) => b.d.localeCompare(a.d)).slice(0, 6);
+  const liftCard = liftRows.length ? `<div class="card"><div class="card-title">운동 무게 변화<span class="sub">최근 순</span></div>${liftRows.map((x) => `<div class="sum-row"><span class="sum-k" style="width:auto;flex:1">${esc(x.n)}</span><b>${x.first}${x.cnt > 1 ? ` → ${x.last}` : ''}kg ${x.last > x.first ? `<small style="color:var(--blue)">▲${+(x.last - x.first).toFixed(1)}</small>` : ''}</b></div>`).join('')}</div>` : '';
+  return `<div class="card"><div class="eyebrow">시작일(${dateLabel(START)}) 이후 · ${meta[metric][1]}</div><div class="seg" style="margin-top:12px">${seg}</div>${body}</div>${liftCard}${ibCard}`;
 }
 
 function startOfWeek(dateStr) { const d = new Date(dateStr + 'T00:00:00'); d.setDate(d.getDate() - d.getDay()); return d; }
@@ -1397,7 +1445,7 @@ function renderFavoritesEdit() {
   $('#headSaveFav').onclick = doSave;
 }
 function exRowEdit(v = {}) {
-  return `<div class="mealrow exrow" data-done="${v.done ? 1 : ''}" data-plan="${v.plan ? 1 : ''}">
+  return `<div class="mealrow exrow" data-done="${v.done ? 1 : ''}" data-plan="${v.plan ? 1 : ''}" data-feel="${v.feel || ''}">
     <div class="mealrow-top"><select class="in sel-cat">${EX_CATS.map((c) => `<option${v.category === c ? ' selected' : ''}>${c}</option>`).join('')}</select>
       <input class="in f-name" placeholder="운동명" value="${esc(v.name ?? '')}"><span></span><button type="button" class="rm" aria-label="삭제">✕</button></div>
     <div class="mealrow-bottom four">
@@ -1406,14 +1454,15 @@ function exRowEdit(v = {}) {
       <label class="unit-in"><input class="f-reps" placeholder="12회" value="${esc(v.reps ?? '')}"></label>
       <label class="unit-in"><input class="f-kcal" type="number" inputmode="numeric" placeholder="자동" value="${v.kcal ?? ''}"><span>kcal</span></label>
     </div>
-    <input class="in f-notes" placeholder="메모 (자세, 속도 등)" value="${esc(v.notes ?? '')}" style="margin-top:8px;height:40px;font-size:14px">
+    <div class="two" style="margin-top:8px"><label class="unit-in"><input class="f-w" type="number" step="0.5" inputmode="decimal" placeholder="무게" value="${v.weight ?? ''}"><span>kg</span></label>
+      <input class="in f-notes" placeholder="메모 (자세, 속도 등)" value="${esc(v.notes ?? '')}" style="height:46px;font-size:14px"></div>
   </div>`;
 }
 function readExRows(box) {
   return [...box.querySelectorAll('.exrow')].map((row) => {
     const q = (c) => row.querySelector(c).value.trim();
     const name = q('.f-name'), duration = num(q('.f-min')), sets = num(q('.f-sets'));
-    const e = { category: q('.sel-cat'), name, duration, sets, reps: q('.f-reps') || null, kcal: num(q('.f-kcal')), notes: q('.f-notes') || null, done: !!row.dataset.done, ...(row.dataset.plan ? { plan: true } : {}) };
+    const e = { category: q('.sel-cat'), name, duration, sets, reps: q('.f-reps') || null, kcal: num(q('.f-kcal')), notes: q('.f-notes') || null, ...(num(q('.f-w')) ? { weight: num(q('.f-w')) } : {}), ...(row.dataset.feel ? { feel: row.dataset.feel } : {}), done: !!row.dataset.done, ...(row.dataset.plan ? { plan: true } : {}) };
     if (e.kcal == null) e.kcal = estimateExerciseKcal(name, duration || (sets ? sets * 2 : null)) ?? (e.category === '근력' && sets ? sets * 8 : null);
     return e;
   }).filter((e) => e.name);
@@ -1780,6 +1829,9 @@ function openExerciseGuide(name) {
     ${g ? `<div class="eyebrow">자극 부위 · ${esc(g.m)}</div>
       ${g.yt ? `<button type="button" class="yt" data-yt="${g.yt}" aria-label="영상 재생"><img src="${ytThumb(g.yt)}" alt=""><span class="yt-play">▶</span></button>` : ''}
       <label class="f">이렇게 해요</label><ol class="guide">${g.steps.map((s) => `<li>${esc(s)}</li>`).join('')}</ol>
+      ${(() => { const h = liftHistory(name); if (!h.length) return ''; const first = h[h.length - 1], last = h[0], d = last.weight - first.weight;
+        return `<label class="f">내 무게 기록</label><div class="lift-hist">${h.slice(0, 6).map((x) => `<span>${mmdd(x.date)} <b>${x.weight}kg</b></span>`).join('')}</div>
+          <p class="desc small">${h.length > 1 ? `처음 ${first.weight}kg → 지금 ${last.weight}kg ${d > 0 ? '▲' + d : d < 0 ? '▼' + Math.abs(d) : '(변화 없음)'}` : '첫 기록이에요. 다음엔 조금씩 올려봐요.'}</p>`; })()}
       <label class="f">자세 팁 · 주의</label><ul class="guide tips">${g.tips.map((s) => `<li>${esc(s)}</li>`).join('')}<li>허리나 관절에 날카로운 통증이 느껴지면 바로 멈춰요.</li></ul>`
       : '<p class="desc">이 운동은 아직 설명이 없어요. 아래 버튼으로 영상을 찾아보세요.</p>'}
     <a class="btn ghost yt-link" href="${search}" target="_blank" rel="noopener">${g?.yt ? '▶ YouTube에서 열기 / 다른 영상 찾기' : '▶ YouTube에서 영상 찾아보기'}</a>`);
