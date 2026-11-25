@@ -664,6 +664,8 @@ function viewSettings() {
     <div class="eyebrow">운동 경험</div>
     <div class="seg" style="margin:6px 0 4px">${[['new', '처음'], ['some', '가끔'], ['steady', '꾸준히']].map(([v, t]) => `<button class="${(PROFILE?.level || 'new') === v ? 'on' : ''}" data-level="${v}">${t}</button>`).join('')}</div>
     <p class="desc small" style="margin:0 0 16px">운동 장소·허리·경험은 추천 플랜을 새로 받을 때부터 적용돼요.</p>
+    <div class="eyebrow">도움말</div>
+    <button type="button" class="in daterow" id="tourBtn" style="margin:6px 0 16px">사용방법 보기<span class="chev">›</span></button>
     <div class="eyebrow">모드</div><div style="margin:6px 0 16px">${store?.label || ''}</div>
     ${store?.mode === 'supabase' ? `<div class="eyebrow">내 기록 공유하기</div>
     <button type="button" class="in daterow" id="shareBtn" style="margin:6px 0 16px">${shareToken ? '공유 중 · 링크 보기' : '읽기 전용 링크 만들기'}<span class="chev">›</span></button>
@@ -1565,7 +1567,7 @@ async function finishOnboarding(A) {
   const h = num(A.h), w = num(A.w), g = num(A.g);
   const mon = new Date(today + 'T00:00:00'); mon.setDate(mon.getDate() - ((mon.getDay() + 6) % 7));
   const back = { new: 0, some: 1, steady: 2 }[A.level]; mon.setDate(mon.getDate() - 7 * back);
-  const profile = { goal: g, place: A.place, back: A.back === 'yes', level: A.level, program_start: mon.toLocaleDateString('sv') };
+  const profile = { goal: g, place: A.place, back: A.back === 'yes', level: A.level, program_start: mon.toLocaleDateString('sv'), tour: 'pending' };
   try { localStorage.setItem('diet.profile', JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); localStorage.setItem('diet.startDate', today); } catch {}
   if (store.mode === 'supabase') {
     const { data: u } = await store.sb.auth.getUser();
@@ -1632,6 +1634,7 @@ document.addEventListener('click', async (e) => {
   if (e.target.closest('#delAcct')) return openDeleteSheet();
   if (e.target.closest('#shareBtn')) return openShareSheet();
   if (e.target.closest('#goalBtn')) return openGoalSheet();
+  if (e.target.closest('#tourBtn')) return startTour();
   const yb = e.target.closest('[data-yt]');
   if (yb) { yb.outerHTML = `<div class="yt"><iframe src="https://www.youtube-nocookie.com/embed/${yb.dataset.yt}?playsinline=1&autoplay=1&rel=0&modestbranding=1" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe></div>`; return; }
   const t = e.target.closest('[data-exinfo]'); if (t) openExerciseGuide(t.dataset.exinfo);
@@ -1717,6 +1720,88 @@ function openDeleteSheet() {
   };
 }
 
+/* ---------------- first-run guided tour (spotlight) ---------------- */
+const TOUR_TAB = (t) => `.tabs [data-tab="${t}"]`;
+const TOUR = [
+  { center: true, title: '환영해요! 👋', text: '처음이시죠? 앱 사용법을 직접 눌러보며 알려드릴게요.\n\n건너뛰어도 괜찮아요. 설정 탭의 「사용방법 보기」에서 언제든 다시 볼 수 있어요.' },
+  { tab: 'home', sel: TOUR_TAB('home'), tap: true, title: '오늘 탭', text: '오늘 체중과 할 일 진행률을 한눈에 보는 곳이에요. 빛나는 버튼을 눌러보세요!' },
+  { tab: 'home', sel: '#quickWeight', title: '체중 입력', text: '아침 공복에 여기서 체중을 입력해요. 체중이 쌓이면 감량 속도를 분석해서 식단과 운동을 자동으로 맞춰드려요.' },
+  { tab: 'home', sel: TOUR_TAB('meals'), tap: true, title: '할일 탭', text: '오늘 먹을 식단과 할 운동이 여기 있어요. 눌러보세요!' },
+  { tab: 'meals', sel: '.check-row .box', title: '체크하기', text: '계획대로 먹거나 운동했다면 동그라미를 눌러 체크해요. 기록에 자동으로 반영돼요.' },
+  { tab: 'meals', sel: '.check-row .more', title: '다르게 했을 때', text: '⋯ 버튼: 다른 걸 먹었거나 안 먹었을 때, 대신 한 운동이 있을 때 눌러요. 계획은 그대로 남아요.' },
+  { tab: 'meals', sel: '[data-fooddate]', title: '계획에 없던 음식', text: '간식이나 외식처럼 계획에 없던 음식은 여기서 추가해요. 이름을 검색하면 칼로리가 자동으로 채워져요.' },
+  { tab: 'meals', sel: TOUR_TAB('record'), tap: true, title: '기록 탭', text: '날짜별 체중·식단·운동과 인바디를 모아보는 곳이에요. 눌러보세요!' },
+  { tab: 'record', sel: '#openCal', title: '날짜 고르기', text: '달력 아이콘으로 원하는 날짜로 바로 이동해요. 인바디를 잰 날은 IN 표시가 붙어요.' },
+  { tab: 'record', sel: TOUR_TAB('stats'), tap: true, title: '통계 탭', text: '체중과 섭취·소모 칼로리 그래프, 인바디 변화를 봐요. 눌러보세요!' },
+  { tab: 'stats', sel: TOUR_TAB('plan'), tap: true, title: '계획 탭', text: '앞으로의 식단·운동 계획과 체중 추이 분석이 있어요. 눌러보세요!' },
+  { tab: 'plan', sel: '.exinfo', title: '운동 설명', text: '운동 항목을 누르면 하는 방법과 영상이 나와요. 처음 하는 운동도 따라 할 수 있어요.' },
+  { tab: 'plan', sel: TOUR_TAB('settings'), tap: true, title: '설정 탭', text: '목표 체중, 키, 운동 장소를 바꾸고 기록을 공유할 수 있어요. 눌러보세요!' },
+  { tab: 'settings', sel: '#tourBtn', title: '다시 보기', text: '이 사용방법은 여기서 언제든 다시 볼 수 있어요. 이제 시작해볼까요? 🎉', last: true },
+];
+let tourEl = null;
+function endTour(skipped) {
+  if (tourEl) { tourEl.remove(); tourEl = null; }
+  document.body.classList.remove('touring');
+  saveProfilePatch({ tour: 'done' });
+  tab = 'home'; render(); window.scrollTo(0, 0);
+  if (skipped) {
+    const n = document.createElement('div'); n.className = 'tour-note';
+    n.innerHTML = '<div class="tour-card"><b>건너뛰었어요</b><p>설정 탭 → <b>「사용방법 보기」</b>에서 언제든 다시 볼 수 있어요.</p><button class="btn" id="tnOk">확인</button></div>';
+    document.body.appendChild(n); n.querySelector('#tnOk').onclick = () => n.remove();
+  }
+}
+function startTour() {
+  if (READONLY || tourEl) return;
+  closeSheet();
+  tourEl = document.createElement('div'); tourEl.id = 'tour';
+  tourEl.innerHTML = '<div class="tm tm-t"></div><div class="tm tm-b"></div><div class="tm tm-l"></div><div class="tm tm-r"></div><div class="tring"></div><div class="tcard"></div>';
+  document.body.appendChild(tourEl); document.body.classList.add('touring');
+  let i = 0, target = null, token = 0;
+  const q = (c) => tourEl.querySelector(c);
+  const place = () => {
+    if (!tourEl) return;
+    const W = window.innerWidth, H = window.innerHeight, card = q('.tcard'), st = TOUR[i];
+    const set = (el, l, t, w, h) => Object.assign(el.style, { left: l + 'px', top: t + 'px', width: Math.max(0, w) + 'px', height: Math.max(0, h) + 'px' });
+    tourEl.classList.toggle('notarget', !target);
+    if (!target) { set(q('.tm-t'), 0, 0, W, H); set(q('.tm-b'), 0, 0, 0, 0); set(q('.tm-l'), 0, 0, 0, 0); set(q('.tm-r'), 0, 0, 0, 0); q('.tring').style.display = 'none';
+      Object.assign(card.style, { left: '50%', top: '50%', transform: 'translate(-50%,-50%)', bottom: 'auto' }); return; }
+    const r = target.getBoundingClientRect(), pad = 6, x = r.left - pad, y = r.top - pad, w = r.width + pad * 2, h = r.height + pad * 2;
+    set(q('.tm-t'), 0, 0, W, y); set(q('.tm-b'), 0, y + h, W, H - y - h); set(q('.tm-l'), 0, y, x, h); set(q('.tm-r'), x + w, y, W - x - w, h);
+    const ring = q('.tring'); ring.style.display = 'block'; set(ring, x, y, w, h);
+    ring.style.borderRadius = (parseFloat(getComputedStyle(target).borderTopLeftRadius) || 10) + pad + 'px';
+    const below = y + h + 16 + 190 < H; // room under the target?
+    Object.assign(card.style, { left: '50%', transform: 'translateX(-50%)', top: below ? Math.min(y + h + 14, H - 210) + 'px' : 'auto', bottom: below ? 'auto' : (H - y + 14) + 'px' });
+  };
+  const draw = () => {
+    const st = TOUR[i], total = TOUR.length;
+    q('.tcard').innerHTML = `<div class="tstep">${i + 1} / ${total}</div><b>${st.title}</b><p>${esc(st.text).replace(/\n/g, '<br>')}</p>
+      <div class="tbtns"><button class="tskip" id="tSkip">건너뛰기</button>${st.tap ? '<span class="thint">👆 빛나는 곳을 눌러보세요</span>' : ''}<button class="tnext" id="tNext">${st.last ? '시작하기' : st.tap ? '대신 넘기기' : '다음'}</button></div>`;
+    q('#tSkip').onclick = () => endTour(true);
+    q('#tNext').onclick = () => { if (st.last) endTour(false); else if (st.tap && target) target.click(); else go(i + 1); };
+  };
+  const go = async (n) => {
+    const my = ++token;
+    while (n < TOUR.length) {
+      const st = TOUR[n];
+      if (st.tab && tab !== st.tab) { const b = document.querySelector(TOUR_TAB(st.tab)); if (b) b.click(); await new Promise((r) => setTimeout(r, 450)); }
+      if (!st.sel) { target = null; break; }
+      const el = document.querySelector(st.sel);
+      if (el && el.offsetParent !== null) { target = el; el.scrollIntoView({ block: 'center' }); await new Promise((r) => setTimeout(r, 120)); break; }
+      n++; // target missing (e.g. no plan yet) → skip this step
+    }
+    if (my !== token) return;
+    if (n >= TOUR.length) return endTour(false);
+    i = n; const st = TOUR[i];
+    draw(); place();
+    if (st.tap && target) {
+      const el = target, onTap = () => { el.removeEventListener('click', onTap, true); setTimeout(() => go(i + 1), 120); };
+      el.addEventListener('click', onTap, true);
+    }
+  };
+  window.addEventListener('resize', place); window.addEventListener('scroll', place, true);
+  go(0);
+}
+
 (async function boot() {
   try {
     $('#hello').textContent = dailyQuote();
@@ -1758,5 +1843,6 @@ function openDeleteSheet() {
     favorites = await store.favorites.get();
     if (!READONLY) { await loadProfile(); if (!PROFILE && !(await store.range('2000-01-01', '2100-01-01')).length) return showOnboarding(); }
     await refresh();
+    if (!READONLY && PROFILE?.tour === 'pending') setTimeout(startTour, 500);
   } catch (e) { $('#view').innerHTML = `<div class="card"><div class="err">${esc(authMsg(e))}</div></div>`; }
 })();
