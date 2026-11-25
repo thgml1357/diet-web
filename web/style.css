@@ -279,3 +279,6 @@ body.sheet-open{position:fixed;left:0;right:0;width:100%;overflow:hidden}
 .act-row label span{font-weight:500;font-size:12px}
 .act-ok{font-style:normal;font-size:12px;min-width:0;white-space:nowrap}.act-ok.on{color:var(--blue)}.act-ok.err{color:var(--up)}
 .act-row b{color:var(--ink)}
+
+.act-row label.auto{flex:1.25;color:var(--sub)}.act-row label.auto b{flex:1;text-align:right;font-size:15px;font-weight:700;color:var(--ink)}
+.act-row label.auto span{white-space:nowrap}
