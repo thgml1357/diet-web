@@ -419,3 +419,15 @@ html{overscroll-behavior-y:contain}
 
 .check.st-portion .check-name{text-decoration:none;color:var(--ink)}
 .check small s{color:var(--sub)}
+
+/* 기성품 빠른 담기 · 대분노 */
+.qa{margin:6px 0 4px}
+.qa-cats{margin-bottom:6px}
+.qa-list{max-height:230px;overflow-y:auto;background:#fff;border:1px solid var(--line);border-radius:12px}
+.qa-i{display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;padding:12px 14px;text-align:left;font-size:14px;background:#fff;border-bottom:1px solid #f2f4f6}
+.qa-i:last-child{border-bottom:0}.qa-i:active,.qa-i.added{background:var(--blue-bg)}.qa-i b{font-weight:600}.qa-i span{font-size:12px;color:var(--sub);white-space:nowrap}
+.hero2[data-m=rage] .ring .fg{stroke:#e03131}.hero2[data-m=rage] .glow{opacity:1;background:radial-gradient(circle,rgba(224,49,49,.38),transparent 68%);animation:hpulse 1s ease-in-out infinite}
+.hero2[data-m=rage] .mascot{animation:rageShake .5s linear infinite}
+.hero2[data-m=rage] .msg b{color:#e03131}
+@keyframes rageShake{0%,100%{transform:translateX(0) rotate(0)}20%{transform:translateX(-5px) rotate(-3deg)}40%{transform:translateX(5px) rotate(3deg)}60%{transform:translateX(-4px) rotate(-2deg)}80%{transform:translateX(4px) rotate(2deg)}}
+.hero2[data-m=stern] .mascot{animation:rageShake 1.4s linear infinite}
