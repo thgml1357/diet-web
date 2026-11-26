@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-26 · 추천 식단 라벨';
+const APP_VERSION = '2026-11-26 · 통계 기간 설정';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -671,16 +671,28 @@ function recentFoods() {
   recs().forEach((r) => (r.meals || []).forEach((f) => { const n = f.planned || f.name; if (!n || !f.kcal) return; const o = m[n] = m[n] || { n, c: 0, d: '', f }; o.c++; if (r.date >= o.d) { o.d = r.date; o.f = f; } }));
   return Object.values(m).sort((a, b) => b.d.localeCompare(a.d) || b.c - a.c).slice(0, 8).map((o) => ({ name: o.n, grams: o.f.grams || 0, kcal: o.f.kcal, cat: '식사' }));
 }
+// 통계 기간: 1주/1개월/3개월/6개월/전체/직접
+const STAT_PERIODS = [['1w', '1주', 7], ['1m', '1개월', 30], ['3m', '3개월', 90], ['6m', '6개월', 180], ['all', '전체', 0], ['custom', '직접', 0]];
+let statP = (() => { try { return { key: '1m', from: addDays(today, -29), to: today, ...JSON.parse(localStorage.getItem('diet.statp')) }; } catch { return { key: '1m', from: addDays(today, -29), to: today }; } })();
+function statRange() {
+  const first = recs()[0]?.date || today;
+  if (statP.key === 'all') return { from: first, to: today };
+  if (statP.key === 'custom') { const f = statP.from <= statP.to ? statP.from : statP.to, t = statP.from <= statP.to ? statP.to : statP.from; return { from: f, to: t }; }
+  const n = STAT_PERIODS.find((x) => x[0] === statP.key)?.[2] || 30;
+  return { from: addDays(today, -(n - 1)), to: today };
+}
+const saveStatP = () => { try { localStorage.setItem('diet.statp', JSON.stringify(statP)); } catch {} };
 function weekReport() {
-  const days = (from, n) => Array.from({ length: n }, (_, i) => cache[addDays(from, i)]).filter(Boolean);
-  const cur = days(addDays(today, -6), 7), prev = days(addDays(today, -13), 7);
+  const { from, to } = statRange(), n = Math.round((new Date(to + 'T00:00:00') - new Date(from + 'T00:00:00')) / 86400000) + 1;
+  const days = (f, k) => Array.from({ length: k }, (_, i) => cache[addDays(f, i)]).filter(Boolean);
+  const cur = days(from, n), prev = statP.key === 'all' ? [] : days(addDays(from, -n), n);
   const avg = (rs, f) => { const v = rs.map(f).filter((x) => x != null && x !== '' && !Number.isNaN(Number(x))).map(Number); return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null; };
   const wC = avg(cur, (r) => r.weight), wP = avg(prev, (r) => r.weight);
   const kc = avg(cur, (r) => r.calories_consumed), st = avg(cur, (r) => r.steps), wt = avg(cur, (r) => (r.checkin && (r.checkin.water_ml != null || r.checkin.water != null) ? waterMl(r) : null));
   const exDays = cur.filter((r) => (r.exercises || []).length).length, exMin = cur.reduce((a, r) => a + (r.exercises || []).reduce((b, e) => b + (Number(e.duration) || 0), 0), 0);
   if (!cur.length) return '';
   const row = (k, v) => `<div class="sum-row"><span class="sum-k" style="width:auto;flex:1">${k}</span><b>${v}</b></div>`;
-  return `<div class="card"><div class="card-title">최근 7일 리포트<span class="sub">${dateLabel(addDays(today, -6))} ~ 오늘</span></div>
+  return `<div class="card"><div class="card-title">기간 리포트<span class="sub">${n}일${prev.length ? ' · 이전 기간 대비' : ''}</span></div>
     ${row('평균 체중', wC != null ? `${wC.toFixed(2)}kg ${wP != null ? `<small style="color:var(--${wC - wP <= 0 ? 'blue' : 'up'})">${wC - wP > 0 ? '+' : ''}${(wC - wP).toFixed(2)}</small>` : ''}` : '–')}
     ${row('평균 섭취', kc != null ? `${Math.round(kc).toLocaleString()} kcal` : '–')}
     ${row('평균 걸음', st != null ? `${Math.round(st).toLocaleString()} 걸음` : '–')}
@@ -844,16 +856,17 @@ function lineChart(rows, val, fmt) {
 }
 let ibMetric = 'fat_pct';
 function viewStats() {
-  const rows = recs().filter((r) => r[metric] != null && r.date >= START).slice(-30);
+  const { from: pf, to: pt } = statRange();
+  const rows = recs().filter((r) => r[metric] != null && r.date >= pf && r.date <= pt);
   const meta = { weight: ['몸무게', 'kg'], calories_consumed: ['섭취', 'kcal'], calories_burned: ['소모', 'kcal'], steps: ['걸음', '걸음'] };
   const seg = Object.entries(meta).map(([k, [n]]) => `<button data-metric="${k}" class="${k === metric ? 'on' : ''}">${n}</button>`).join('');
-  const body = rows.length ? lineChart(rows, (r) => Number(r[metric]), (v) => (metric === 'weight' ? v.toFixed(2) : Math.round(v).toLocaleString())) : '<div class="empty">아직 기록이 없어요</div>';
+  const body = rows.length ? lineChart(rows, (r) => Number(r[metric]), (v) => (metric === 'weight' ? v.toFixed(2) : Math.round(v).toLocaleString())) : '<div class="empty">이 기간에는 기록이 없어요</div>';
   const ibs = ibRecs();
   let ibCard = `<div class="card"><div class="card-title">인바디</div><div class="empty">아직 인바디 기록이 없어요. 히스토리 탭에서 날짜를 고르고 '+ 인바디'를 눌러 추가하세요.</div></div>`;
   if (ibs.length) {
     const last = ibs[ibs.length - 1], prev = ibs[ibs.length - 2];
     const f = IB_FIELDS.find((x) => x[0] === ibMetric);
-    const ser = ibs.map((r) => [r, ibCalc(r.inbody)[ibMetric]]).filter(([, v]) => v != null);
+    const ser = ibs.filter((r) => r.date >= pf && r.date <= pt).map((r) => [r, ibCalc(r.inbody)[ibMetric]]).filter(([, v]) => v != null);
     const iseg = IB_FIELDS.map(([k, n]) => `<button data-ibmetric="${k}" class="${k === ibMetric ? 'on' : ''}">${n}</button>`).join('');
     ibCard = `<div class="card"><div class="card-title">인바디<span class="sub">${dateLabel(last.date)} 측정${prev ? ` · ${dateLabel(prev.date)} 대비` : ''}</span></div>${ibGrid(last.inbody, prev?.inbody)}</div>
     <div class="card"><div class="card-title">인바디 변화<span class="sub">${ibs.length}회 측정</span></div><div class="seg scroll">${iseg}</div>
@@ -864,7 +877,10 @@ function viewStats() {
   recs().forEach((r) => (r.exercises || []).forEach((e) => { const n = e.planned || e.name; if (Number(e.weight) > 0) (lifts[n] = lifts[n] || []).push({ d: r.date, w: Number(e.weight) }); }));
   const liftRows = Object.entries(lifts).map(([n, l]) => ({ n, first: l[0].w, last: l[l.length - 1].w, cnt: l.length, d: l[l.length - 1].d })).sort((a, b) => b.d.localeCompare(a.d)).slice(0, 6);
   const liftCard = liftRows.length ? `<div class="card"><div class="card-title">운동 무게 변화<span class="sub">최근 순</span></div>${liftRows.map((x) => `<div class="sum-row"><span class="sum-k" style="width:auto;flex:1">${esc(x.n)}</span><b>${x.first}${x.cnt > 1 ? ` → ${x.last}` : ''}kg ${x.last > x.first ? `<small style="color:var(--blue)">▲${+(x.last - x.first).toFixed(1)}</small>` : ''}</b></div>`).join('')}</div>` : '';
-  return `${weekReport()}<div class="card"><div class="eyebrow">시작일(${dateLabel(START)}) 이후 · ${meta[metric][1]}</div><div class="seg" style="margin-top:12px">${seg}</div>${body}</div>${liftCard}${ibCard}`;
+  const perBar = `<div class="card statper"><div class="seg scroll" id="statper">${STAT_PERIODS.map(([k, n]) => `<button data-statper="${k}" class="${k === statP.key ? 'on' : ''}">${n}</button>`).join('')}</div>
+    ${statP.key === 'custom' ? `<div class="statcustom"><button type="button" class="in daterow" data-statdate="from">${dateLabel(statRange().from)}</button><span>~</span><button type="button" class="in daterow" data-statdate="to">${dateLabel(statRange().to)}</button></div>` : ''}
+    <div class="statlbl">${dateLabel(pf)} ~ ${pt === today ? '오늘' : dateLabel(pt)}</div></div>`;
+  return `${perBar}${weekReport()}<div class="card"><div class="eyebrow">${meta[metric][0]} · ${meta[metric][1]}${rows.length ? ` · ${rows.length}회 기록` : ''}</div><div class="seg" style="margin-top:12px">${seg}</div>${body}</div>${liftCard}${ibCard}`;
 }
 
 function startOfWeek(dateStr) { const d = new Date(dateStr + 'T00:00:00'); d.setDate(d.getDate() - d.getDay()); return d; }
@@ -2124,6 +2140,10 @@ function render() {
 }
 $('#view').addEventListener('click', (e) => {
   const fav = e.target.closest('.favmini'); if (fav) return favMiniClick(fav);
+  const sp = e.target.closest('[data-statper]');
+  if (sp) { statP.key = sp.dataset.statper; if (statP.key === 'custom' && !(statP.from && statP.to)) { statP.from = addDays(today, -29); statP.to = today; } saveStatP(); return render(); }
+  const sd = e.target.closest('[data-statdate]');
+  if (sd) { const which = sd.dataset.statdate, r0 = statRange(); return openDatePicker(r0[which], (d) => { statP.from = which === 'from' ? d : r0.from; statP.to = which === 'to' ? d : r0.to; statP.key = 'custom'; saveStatP(); render(); }); }
   const mdn = e.target.closest('[data-mealdone]'); if (mdn) return setMealDone(mdn.dataset.mealdone);
   const mop = e.target.closest('[data-mealopen]'); if (mop) return openDetail({ kind: 'meal', type: mop.dataset.mealopen });
   if (e.target.closest('[data-exopen]')) return openDetail({ kind: 'ex' });
