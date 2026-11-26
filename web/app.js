@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-26 · 통계 그래프 눈금·목표선';
+const APP_VERSION = '2026-11-26 · 끼니 상세 시트 유지';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -952,6 +952,7 @@ function activityRow(date) {
     <label class="auto" title="걸음 + 운동으로 자동 계산">소모<b class="burn-val">${calcBurn(r) != null ? '≈ ' + calcBurn(r).toLocaleString() : '–'}</b><span>kcal 자동</span></label><i class="act-ok" aria-live="polite"></i></div>`;
 }
 const PLUS = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+let returnDetail = null;
 let detail = null; // 열려 있는 끼니/운동 상세 시트: { kind: 'meal', type } | { kind: 'ex' }
 function mealGroup(type) {
   const rows = dayPlan.meals.map((m, i) => [m, i]).filter(([m]) => m.type === type);
@@ -1007,7 +1008,7 @@ function detailBody(d) {
     <div class="act-btns">${g.rows.length ? `<button type="button" class="btn ghost" data-skipmeal="${d.type}">${allSkip ? '안 먹음 취소' : '안 먹었어요'}</button>${allSkip ? '' : `<button type="button" class="btn ghost" data-swapmeal="${d.type}">다른 걸 먹었어요</button>`}` : ''}
       <button type="button" class="btn ghost" data-fooddate="${mealDate}" data-ftype="${MEAL_TYPES.includes(d.type) ? d.type : ''}">${PLUS} 음식 추가</button></div>`;
 }
-function openDetail(d) { openSheet(detailBody(d)); detail = d; }
+function openDetail(d) { openSheet(detailBody(d)); returnDetail = null; detail = d; }
 async function setMealDone(type) {
   if (READONLY) return;
   if (type === 'ex') {
@@ -1370,7 +1371,7 @@ sheet.addEventListener('focusin', (e) => {
 });
 sheet.addEventListener('focusout', () => setTimeout(() => { if (!isField(document.activeElement) || !sheet.contains(document.activeElement)) { sheetTyping = false; syncSheetViewport(); } }, 120));
 function openSheet(html) {
-  detail = null;
+  returnDetail = detail; detail = null; // 끼니 상세에서 연 하위 시트는 닫히면 그 상세로 돌아옴
   sheet.innerHTML = `<div class="sheet-handle"></div>${html}`;
   sheet.style.transform = '';
   if (sheet.hidden) { lockedY = window.scrollY; document.body.style.top = `-${lockedY}px`; document.body.classList.add('sheet-open'); }
@@ -1379,7 +1380,8 @@ function openSheet(html) {
   syncSheetViewport();
 }
 function closeSheet() {
-  detail = null;
+  const rd = returnDetail; returnDetail = null; detail = null;
+  if (rd) setTimeout(() => openDetail(rd), 0);
   if (!sheet.hidden) { try { document.activeElement?.blur(); } catch {} document.body.classList.remove('sheet-open'); document.body.style.top = ''; window.scrollTo(0, lockedY); }
   sheet.hidden = bg.hidden = true; sheetTyping = false; sheet.classList.remove('full'); sheet.style.transform = ''; sheet.style.bottom = ''; sheet.style.height = ''; sheet.style.maxHeight = ''; sheet.style.paddingBottom = '';
 }
