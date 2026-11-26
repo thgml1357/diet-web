@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-26 · 기록·히스토리 합치기';
+const APP_VERSION = '2026-11-26 · 물 목표에서 음식 수분 제외';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -622,9 +622,10 @@ const waterMl = (r) => { const c = r?.checkin || {}; return c.water_ml != null ?
 // 하루 물 목표: 체중(×32ml)·키(체표면적) 기반 + 운동 + 커피/술/짠 음식에 따라 추가
 function waterPlan() {
   const w = Number(latestWeight()) || 60, r = cache[today] || {};
-  let base = w * 32, why = `체중 ${w}kg`;
-  if (HEIGHT) { const bsa = Math.sqrt((HEIGHT * w) / 3600); base = (w * 32 + bsa * 1200) / 2; why = `체중 ${w}kg · 키 ${HEIGHT}cm`; }
-  let ml = base; const adds = [];
+  let need = w * 30, why = `체중 ${w}kg`; // 하루 총 수분 필요량(음식 수분 포함)
+  if (HEIGHT) { const bsa = Math.sqrt((HEIGHT * w) / 3600); need = (w * 30 + bsa * 1100) / 2; why = `체중 ${w}kg · 키 ${HEIGHT}cm`; }
+  const food = need * 0.2, base = need - food; // 필요량의 약 20%는 음식으로 채워져서 마실 양에서 뺌
+  let ml = base; const adds = [`음식 수분 −${Math.round(food / 10) * 10}`];
   const exMin = (r.exercises || []).reduce((a, e) => a + (Number(e.duration) || 0), 0);
   if (exMin) { const v = Math.round(exMin * 10); ml += v; adds.push(`운동 ${exMin}분 +${v}`); }
   const names = (r.meals || []).map((m) => m.name || '').join(' ');
@@ -634,8 +635,8 @@ function waterPlan() {
   const alc = cnt(/소주|맥주|와인|막걸리|하이볼|칵테일|술/g);
   if (alc) { const v = Math.min(alc, 3) * 250; ml += v; adds.push(`술 +${v}`); }
   if (/라면|짬뽕|국밥|찌개|떡볶이|치킨|피자|햄버거|족발|젓갈|탕|국수/.test(names)) { ml += 200; adds.push('짠 음식 +200'); }
-  const goal = Math.min(4000, Math.max(1500, Math.round(ml / 50) * 50));
-  return { goal, why: `${why} 기준 ${Math.round(base / 50) * 50}ml${adds.length ? ' · ' + adds.join(' · ') : ''}` };
+  const goal = Math.min(3500, Math.max(1200, Math.round(ml / 50) * 50));
+  return { goal, why: `${why} 기준 총 ${Math.round(need / 50) * 50}ml${adds.length ? ' · ' + adds.join(' · ') : ''}` };
 }
 function checkinCard() {
   const ml = waterMl(cache[today]), { goal, why } = waterPlan(), cup = cupMl(), pct = Math.min(100, Math.round((ml / goal) * 100));
