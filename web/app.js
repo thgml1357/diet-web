@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-26 · 물 목표에서 음식 수분 제외';
+const APP_VERSION = '2026-11-26 · 추천 식단 라벨';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -919,7 +919,7 @@ function mealGroup(type) {
   else if (sts.every((x) => x === 'done')) st = 'done';
   else if (sts.every((x) => x === 'skip')) st = mine.length ? 'swap' : 'skip';
   else st = 'swap';
-  const note = !rows.length ? '직접 기록' : st === 'part' ? `${rows.length - left}/${rows.length} 체크` : st === 'skip' ? '안 먹음' : st === 'swap' ? '다르게 먹음' : '';
+  const note = !rows.length ? '' : st === 'part' ? `${rows.length - left}/${rows.length} 체크` : st === 'skip' ? '안 먹음' : st === 'swap' ? '다르게 먹음' : '';
   return { type, rows, mine, st, planned, ate, note, left };
 }
 function mealRowHtml(g) {
@@ -928,7 +928,7 @@ function mealRowHtml(g) {
   const kc = g.st === 'skip' ? 0 : handled ? Math.round(g.ate) : g.planned;
   const sum = `${names}${mn ? `${names ? ' ' : ''}<em class="plus-t">+ ${mn}</em>` : ''}`;
   return `<div class="mrow mr-${g.st}"><button type="button" class="check mck st-${g.st === 'skip' ? 'skip' : g.st === 'swap' || g.st === 'done' ? 'done' : g.st === 'part' ? 'part' : 'none'}" data-mealdone="${g.type}" aria-label="${g.type} 계획대로 먹었어요"><span class="box"></span></button>
-    <button type="button" class="mbody" data-mealopen="${g.type}"><span class="mt">${g.type}${g.note ? `<small class="mnote n-${g.st}">${g.note}</small>` : ''}</span><span class="ms">${sum}</span></button>
+    <button type="button" class="mbody" data-mealopen="${g.type}"><span class="mt">${g.type}<small class="mtag ${g.rows.length ? 'rec' : 'own'}">${g.rows.length ? '추천' : '직접 기록'}</small>${g.note ? `<small class="mnote n-${g.st}">${g.note}</small>` : ''}</span><span class="ms">${sum}</span></button>
     <b class="mk${handled ? '' : ' dim'}">${kc.toLocaleString()}<small>kcal</small></b>
     <button type="button" class="more" data-mealopen="${g.type}" aria-label="${g.type} 자세히">${PENCIL}</button></div>`;
 }
@@ -942,7 +942,7 @@ function exGroup() {
 function exRowHtml(g) {
   const names = g.list.map((e) => esc(e.name)).join(' · ');
   return `<div class="mrow mr-${g.st}"><button type="button" class="check mck st-${g.st === 'skip' ? 'skip' : g.st === 'swap' || g.st === 'done' ? 'done' : g.st === 'part' ? 'part' : 'none'}" data-mealdone="ex" aria-label="운동 계획대로 했어요"><span class="box"></span></button>
-    <button type="button" class="mbody" data-exopen="1"><span class="mt">추천 운동 ${g.list.length}개${g.note ? `<small class="mnote n-${g.st}">${g.note}</small>` : ''}</span><span class="ms">${names}</span></button>
+    <button type="button" class="mbody" data-exopen="1"><span class="mt">운동<small class="mtag rec">추천</small><small class="mtag n">${g.list.length}개</small>${g.note ? `<small class="mnote n-${g.st}">${g.note}</small>` : ''}</span><span class="ms">${names}</span></button>
     <b class="mk dim">${g.mins ? g.mins : g.kc}<small>${g.mins ? '분' : 'kcal'}</small></b>
     <button type="button" class="more" data-exopen="1" aria-label="운동 자세히">${PENCIL}</button></div>`;
 }
