@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-26 · 통계 기간 설정';
+const APP_VERSION = '2026-11-26 · 통계 그래프 눈금·목표선';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -846,23 +846,55 @@ function setHeightSheet() {
   };
 }
 
-function lineChart(rows, val, fmt) {
+function niceTicks(mn, mx, n = 4) {
+  const span = mx - mn || 1, raw = span / n, mag = 10 ** Math.floor(Math.log10(raw)), norm = raw / mag;
+  const step = (norm <= 1 ? 1 : norm <= 2 ? 2 : norm <= 2.5 ? 2.5 : norm <= 5 ? 5 : 10) * mag;
+  const lo = Math.floor(mn / step + 1e-9) * step, hi = Math.ceil(mx / step - 1e-9) * step, t = [];
+  for (let v = lo; v <= hi + step / 1e6; v += step) t.push(+v.toFixed(6));
+  return t.length > 1 ? t : [lo, lo + step];
+}
+// rows: [{date,...}] · val(row) → number · fmt(value) → label · opts: { goal, goalLabel, unit, note }
+function lineChart(rows, val, fmt, opts = {}) {
   const vals = rows.map(val), mn = Math.min(...vals), mx = Math.max(...vals), avg = vals.reduce((a, b) => a + b, 0) / vals.length;
-  const W = 320, H = 160, p = 10, span = mx - mn || 1;
-  const pts = vals.map((v, i) => [p + (rows.length === 1 ? (W - 2 * p) / 2 : (i * (W - 2 * p)) / (rows.length - 1)), H - p - ((v - mn) / span) * (H - 2 * p)]);
-  return `<svg class="chart" viewBox="0 0 ${W} ${H}"><polyline fill="none" stroke="#3182f6" stroke-width="2.5" stroke-linejoin="round" points="${pts.map((q) => q.join(',')).join(' ')}"/>
-      ${pts.map((q) => `<circle cx="${q[0]}" cy="${q[1]}" r="3.5" fill="#3182f6"/>`).join('')}</svg>
-      <div class="stat-row"><div class="stat"><small>최소</small><b>${fmt(mn)}</b></div><div class="stat"><small>평균</small><b>${fmt(avg)}</b></div><div class="stat"><small>최대</small><b>${fmt(mx)}</b></div></div>`;
+  const hasGoal = opts.goal != null && Number.isFinite(opts.goal);
+  const ticks = niceTicks(hasGoal ? Math.min(mn, opts.goal) : mn, hasGoal ? Math.max(mx, opts.goal) : mx);
+  const lo = ticks[0], hi = ticks[ticks.length - 1], W = 340, H = 210, L = 46, R = 14, T = 16, B = 28, pw = W - L - R, ph = H - T - B;
+  const t0 = new Date(rows[0].date + 'T00:00:00').getTime(), t1 = new Date(rows[rows.length - 1].date + 'T00:00:00').getTime();
+  const X = (r) => L + (t1 === t0 ? pw / 2 : ((new Date(r.date + 'T00:00:00').getTime() - t0) / (t1 - t0)) * pw);
+  const Y = (v) => T + ph - ((v - lo) / (hi - lo || 1)) * ph;
+  const pts = rows.map((r, i) => [X(r), Y(vals[i]), vals[i], r]);
+  const tl = (v) => (Number.isInteger(v) ? v : +v.toFixed(2)).toLocaleString();
+  const md = (d) => `${Number(d.slice(5, 7))}/${Number(d.slice(8))}`;
+  const xs = rows.length === 1 ? [[pts[0][0], md(rows[0].date)]] : [[L, md(rows[0].date)], [L + pw / 2, md(rows[Math.round((rows.length - 1) / 2)].date)], [L + pw, md(rows[rows.length - 1].date)]];
+  const iMin = vals.indexOf(mn), iMax = vals.indexOf(mx), iLast = vals.length - 1;
+  const mark = new Map([[iLast, 'last'], [iMin, 'min'], [iMax, 'max']]);
+  const lab = [...mark.keys()].map((i) => { const q = pts[i], right = q[0] > L + pw * 0.8, left = q[0] < L + pw * 0.15; return `<text class="lbl" x="${q[0]}" y="${q[1] + (i === iMin && iMin !== iMax ? 16 : -8)}" text-anchor="${right ? 'end' : left ? 'start' : 'middle'}">${fmt(q[2])}</text>`; }).join('');
+  const goalLine = hasGoal ? `<line class="goal" x1="${L}" x2="${L + pw}" y1="${Y(opts.goal)}" y2="${Y(opts.goal)}"/><text class="goal-t" x="${L + pw}" y="${Y(opts.goal) - 5}" text-anchor="end">${opts.goalLabel || '목표'} ${fmt(opts.goal)}${opts.unit || ''}</text>` : '';
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}">
+      ${ticks.map((v) => `<line class="grid" x1="${L}" x2="${L + pw}" y1="${Y(v)}" y2="${Y(v)}"/><text class="ytick" x="${L - 6}" y="${Y(v) + 3.5}" text-anchor="end">${tl(v)}</text>`).join('')}
+      ${xs.map(([x, t], i) => `<text class="xtick" x="${x}" y="${H - 8}" text-anchor="${i === 0 && xs.length > 1 ? 'start' : i === xs.length - 1 && xs.length > 1 ? 'end' : 'middle'}">${t}</text>`).join('')}
+      ${goalLine}
+      <polyline fill="none" stroke="#3182f6" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${pts.map((q) => q[0].toFixed(1) + ',' + q[1].toFixed(1)).join(' ')}"/>
+      ${rows.length <= 40 ? pts.map((q) => `<circle cx="${q[0]}" cy="${q[1]}" r="3.2" fill="#3182f6"/>`).join('') : `<circle cx="${pts[iLast][0]}" cy="${pts[iLast][1]}" r="4" fill="#3182f6"/>`}
+      ${lab}</svg>
+      <div class="stat-row"><div class="stat"><small>최소</small><b>${fmt(mn)}</b></div><div class="stat"><small>평균</small><b>${fmt(avg)}</b></div><div class="stat"><small>최대</small><b>${fmt(mx)}</b></div></div>
+      ${opts.note ? `<div class="chart-note">${opts.note}</div>` : ''}`;
 }
 let ibMetric = 'fat_pct';
+function chartOpts() {
+  const cur = recs().filter((r) => r.weight != null).pop();
+  if (metric === 'weight') return { goal: GOAL, goalLabel: '목표', unit: 'kg', note: cur ? `현재 ${Number(cur.weight).toFixed(1)}kg · 목표 ${GOAL}kg까지 ${Math.max(0, Number(cur.weight) - GOAL).toFixed(1)}kg 남았어요` : '' };
+  if (metric === 'calories_consumed') { const g = kcalTarget(latestWeight()); return { goal: g, goalLabel: '목표', unit: 'kcal', note: `하루 목표 ${g.toLocaleString()}kcal` }; }
+  return {};
+}
 function viewStats() {
   const { from: pf, to: pt } = statRange();
   const rows = recs().filter((r) => r[metric] != null && r.date >= pf && r.date <= pt);
   const meta = { weight: ['몸무게', 'kg'], calories_consumed: ['섭취', 'kcal'], calories_burned: ['소모', 'kcal'], steps: ['걸음', '걸음'] };
   const seg = Object.entries(meta).map(([k, [n]]) => `<button data-metric="${k}" class="${k === metric ? 'on' : ''}">${n}</button>`).join('');
-  const body = rows.length ? lineChart(rows, (r) => Number(r[metric]), (v) => (metric === 'weight' ? v.toFixed(2) : Math.round(v).toLocaleString())) : '<div class="empty">이 기간에는 기록이 없어요</div>';
+  const body = rows.length ? lineChart(rows, (r) => Number(r[metric]), (v) => (metric === 'weight' ? v.toFixed(1) : Math.round(v).toLocaleString()), chartOpts()) : '<div class="empty">이 기간에는 기록이 없어요</div>';
   const ibs = ibRecs();
-  let ibCard = `<div class="card"><div class="card-title">인바디</div><div class="empty">아직 인바디 기록이 없어요. 히스토리 탭에서 날짜를 고르고 '+ 인바디'를 눌러 추가하세요.</div></div>`;
+  let ibCard = `<div class="card"><div class="card-title">인바디</div><div class="empty">아직 인바디 기록이 없어요. 기록 탭에서 날짜를 고르고 IN 버튼을 눌러 추가하세요.</div></div>`;
   if (ibs.length) {
     const last = ibs[ibs.length - 1], prev = ibs[ibs.length - 2];
     const f = IB_FIELDS.find((x) => x[0] === ibMetric);

@@ -459,3 +459,13 @@ html{overscroll-behavior-y:contain}
 .statper{padding-bottom:12px}.statcustom{display:flex;align-items:center;gap:8px;margin-top:10px}.statcustom .in{flex:1;margin:0;text-align:center}.statcustom span{color:var(--sub)}
 .statlbl{margin-top:10px;font-size:13px;color:var(--sub);text-align:center}
 .statper .seg button{padding:8px 4px;font-size:14px;flex:1;min-width:0}
+
+/* 그래프 눈금·목표선 */
+svg.chart{height:auto;aspect-ratio:340/210}
+svg.chart text{font-family:inherit}
+svg.chart .grid{stroke:#eef0f3;stroke-width:1}
+svg.chart .ytick,svg.chart .xtick{fill:#8b95a1;font-size:10px}
+svg.chart .lbl{fill:#191f28;font-size:11px;font-weight:700;paint-order:stroke;stroke:#fff;stroke-width:3px}
+svg.chart .goal{stroke:#12b886;stroke-width:1.6;stroke-dasharray:5 4}
+svg.chart .goal-t{fill:#0b8f66;font-size:10.5px;font-weight:700;paint-order:stroke;stroke:#fff;stroke-width:3px}
+.chart-note{margin-top:10px;font-size:13px;color:var(--sub);text-align:center}
