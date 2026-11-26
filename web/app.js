@@ -80,7 +80,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-26 · 직접 기록 모드·기성품 추가';
+const APP_VERSION = '2026-11-26 · 기록·히스토리 합치기';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -902,51 +902,103 @@ function activityRow(date) {
   return `<div class="act-row" data-actdate="${date}"><label>걸음<input class="act-in" data-f="steps" type="number" inputmode="numeric" placeholder="0" value="${r.steps ?? ''}"></label>
     <label class="auto" title="걸음 + 운동으로 자동 계산">소모<b class="burn-val">${calcBurn(r) != null ? '≈ ' + calcBurn(r).toLocaleString() : '–'}</b><span>kcal 자동</span></label><i class="act-ok" aria-live="polite"></i></div>`;
 }
+const PLUS = '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>';
+let detail = null; // 열려 있는 끼니/운동 상세 시트: { kind: 'meal', type } | { kind: 'ex' }
+function mealGroup(type) {
+  const rows = dayPlan.meals.map((m, i) => [m, i]).filter(([m]) => m.type === type);
+  const mine = ((cache[mealDate] || {}).meals || []).map((m, i) => [m, i]).filter(([m]) => !m.plan && (type === '기타' ? !MEAL_TYPES.includes(m.type) : m.type === type));
+  if (!rows.length && !mine.length) return null;
+  const sts = rows.map(([m]) => itemStatus(m)), left = sts.filter((x) => !x).length;
+  const planned = rows.reduce((a, [m]) => a + (m.kcal || 0), 0);
+  const ate = rows.reduce((a, [m]) => a + (actualOf(m, 'meals')?.kcal || 0), 0) + mine.reduce((a, [m]) => a + (m.kcal || 0), 0);
+  let st;
+  if (!rows.length) st = 'done';
+  else if (left === rows.length) st = 'none';
+  else if (left) st = 'part';
+  else if (sts.every((x) => x === 'done')) st = 'done';
+  else if (sts.every((x) => x === 'skip')) st = mine.length ? 'swap' : 'skip';
+  else st = 'swap';
+  const note = !rows.length ? '직접 기록' : st === 'part' ? `${rows.length - left}/${rows.length} 체크` : st === 'skip' ? '안 먹음' : st === 'swap' ? '다르게 먹음' : '';
+  return { type, rows, mine, st, planned, ate, note, left };
+}
+function mealRowHtml(g) {
+  const names = g.rows.map(([m]) => esc(m.name)).join(' · '), mn = g.mine.map(([m]) => esc(m.name)).join(' · ');
+  const handled = g.st !== 'none' && g.st !== 'part' ? true : g.st === 'part';
+  const kc = g.st === 'skip' ? 0 : handled ? Math.round(g.ate) : g.planned;
+  const sum = `${names}${mn ? `${names ? ' ' : ''}<em class="plus-t">+ ${mn}</em>` : ''}`;
+  return `<div class="mrow mr-${g.st}"><button type="button" class="check mck st-${g.st === 'skip' ? 'skip' : g.st === 'swap' || g.st === 'done' ? 'done' : g.st === 'part' ? 'part' : 'none'}" data-mealdone="${g.type}" aria-label="${g.type} 계획대로 먹었어요"><span class="box"></span></button>
+    <button type="button" class="mbody" data-mealopen="${g.type}"><span class="mt">${g.type}${g.note ? `<small class="mnote n-${g.st}">${g.note}</small>` : ''}</span><span class="ms">${sum}</span></button>
+    <b class="mk${handled ? '' : ' dim'}">${kc.toLocaleString()}<small>kcal</small></b>
+    <button type="button" class="more" data-mealopen="${g.type}" aria-label="${g.type} 자세히">${PENCIL}</button></div>`;
+}
+function exGroup() {
+  const list = dayPlan.exercises, sts = list.map(itemStatus), left = sts.filter((x) => !x).length;
+  const mins = list.reduce((a, e) => a + (Number(e.duration) || 0), 0), kc = list.reduce((a, e) => a + (e.kcal || 0), 0);
+  const st = !list.length ? null : left === list.length ? 'none' : left ? 'part' : sts.every((x) => x === 'done') ? 'done' : sts.every((x) => x === 'skip') ? 'skip' : 'swap';
+  const note = st === 'part' ? `${list.length - left}/${list.length} 체크` : st === 'skip' ? '못 함' : st === 'swap' ? '다르게 함' : '';
+  return { list, st, left, mins, kc, note };
+}
+function exRowHtml(g) {
+  const names = g.list.map((e) => esc(e.name)).join(' · ');
+  return `<div class="mrow mr-${g.st}"><button type="button" class="check mck st-${g.st === 'skip' ? 'skip' : g.st === 'swap' || g.st === 'done' ? 'done' : g.st === 'part' ? 'part' : 'none'}" data-mealdone="ex" aria-label="운동 계획대로 했어요"><span class="box"></span></button>
+    <button type="button" class="mbody" data-exopen="1"><span class="mt">추천 운동 ${g.list.length}개${g.note ? `<small class="mnote n-${g.st}">${g.note}</small>` : ''}</span><span class="ms">${names}</span></button>
+    <b class="mk dim">${g.mins ? g.mins : g.kc}<small>${g.mins ? '분' : 'kcal'}</small></b>
+    <button type="button" class="more" data-exopen="1" aria-label="운동 자세히">${PENCIL}</button></div>`;
+}
+function detailBody(d) {
+  if (d.kind === 'ex') {
+    return `<div class="sheet-head"><h2>운동</h2></div><p class="desc small">동그라미를 눌러 체크하고, ✎로 다르게 한 운동이나 무게를 기록해요.</p>
+      ${dayPlan.exercises.map((e, i) => checkRow('exercises', i, e)).join('')}
+      <div class="act-btns"><button type="button" class="btn ghost" data-exdate="${mealDate}">${PLUS} 운동 추가</button></div>`;
+  }
+  const g = mealGroup(d.type); if (!g) return `<div class="sheet-head"><h2>${d.type}</h2></div><div class="empty">기록이 없어요</div>`;
+  const allSkip = g.rows.length > 0 && g.st === 'skip';
+  return `<div class="sheet-head"><h2>${d.type}</h2><span class="sub">${Math.round(g.ate).toLocaleString()} / ${g.planned.toLocaleString()} kcal</span></div>
+    ${g.rows.map(([m, i]) => checkRow('meals', i, m)).join('')}${g.mine.map(([m, i]) => mealRowView(m, `${mealDate}:${i}`)).join('')}
+    <div class="act-btns">${g.rows.length ? `<button type="button" class="btn ghost" data-skipmeal="${d.type}">${allSkip ? '안 먹음 취소' : '안 먹었어요'}</button>${allSkip ? '' : `<button type="button" class="btn ghost" data-swapmeal="${d.type}">다른 걸 먹었어요</button>`}` : ''}
+      <button type="button" class="btn ghost" data-fooddate="${mealDate}" data-ftype="${MEAL_TYPES.includes(d.type) ? d.type : ''}">${PLUS} 음식 추가</button></div>`;
+}
+function openDetail(d) { openSheet(detailBody(d)); detail = d; }
+async function setMealDone(type) {
+  if (READONLY) return;
+  if (type === 'ex') {
+    const un = dayPlan.exercises.filter((e) => !itemStatus(e)); const all = dayPlan.exercises.every((e) => itemStatus(e) === 'done');
+    if (!un.length && !all) return openDetail({ kind: 'ex' });
+    dayPlan.exercises = dayPlan.exercises.map((e) => { const { st, actual, done, ...base } = e; return all ? { ...base, done: false } : itemStatus(e) ? e : { ...base, st: 'done', done: true }; });
+    await store.exercises.save(mealDate, dayPlan.exercises);
+  } else {
+    const idx = dayPlan.meals.map((m, i) => i).filter((i) => dayPlan.meals[i].type === type);
+    if (!idx.length) return openDetail({ kind: 'meal', type });
+    const un = idx.filter((i) => !itemStatus(dayPlan.meals[i])), all = idx.every((i) => itemStatus(dayPlan.meals[i]) === 'done');
+    if (!un.length && !all) return openDetail({ kind: 'meal', type });
+    idx.forEach((i) => { const { st, actual, done, ...base } = dayPlan.meals[i]; dayPlan.meals[i] = all ? { ...base, done: false } : itemStatus(dayPlan.meals[i]) ? dayPlan.meals[i] : { ...base, st: 'done', done: true }; });
+    await store.meals.save(mealDate, dayPlan.meals);
+  }
+  await syncRecordFromPlan(mealDate, dayPlan);
+  if (mealDate === today) todayPlan = dayPlan;
+  render();
+}
 function viewMeals() {
   const r = cache[mealDate] || {};
   const planned = dayPlan.meals.reduce((a, m) => a + (m.kcal || 0), 0);
   const ate = Math.round((r.meals || []).reduce((a, m) => a + (m.kcal || 0), 0));
-  const exIdx = (r.meals || []).map((m, i) => [m, i]).filter(([m]) => !m.plan);
-  const planTypes = new Set(dayPlan.meals.map((m) => m.type));
-  const xRow = ([m, i]) => mealRowView(m, `${mealDate}:${i}`);
-  const xRowPlain = ([m, i]) => mealRowView(m, `${mealDate}:${i}`).replace('<span class="tag t-x">추가</span>', '');
-  const groups = MEAL_TYPES.map((type) => {
-    const rows = dayPlan.meals.map((m, i) => [m, i]).filter(([m]) => m.type === type);
-    if (!rows.length) return '';
-    const allSkip = rows.every(([m]) => itemStatus(m) === 'skip');
-    const key = `${mealDate}|${type}`, mine = exIdx.filter(([m]) => m.type === type);
-    const head = `<div class="mg-label mg-flex">${type}<span class="mg-btns">${allSkip ? '' : `<button type="button" class="skipall" data-swapmeal="${type}">다른 걸 먹었어요</button>`}<button type="button" class="skipall${allSkip ? ' undo' : ''}" data-skipmeal="${type}">${allSkip ? '안 먹음 취소' : '안 먹었어요'}</button></span></div>`;
-    // when the whole meal was skipped, fold the planned items into one line (less scrolling)
-    const body = allSkip && !openMeals.has(key)
-      ? `<button type="button" class="mg-collapsed" data-expand="${key}">계획 ${rows.length}개 · 안 먹음<span>펼치기 ▾</span></button>`
-      : rows.map(([m, i]) => checkRow('meals', i, m)).join('') + (allSkip ? `<button type="button" class="mg-collapsed open" data-expand="${key}">접기 ▴</button>` : '');
-    return head + body + mine.map(xRow).join('');
-  }).join('');
-  const bottomTypes = [...MEAL_TYPES, '기타'].filter((t) => !planTypes.has(t));
-  const xMealsBottom = bottomTypes.map((t) => { const rows = exIdx.filter(([m]) => (MEAL_TYPES.includes(m.type) ? m.type : '기타') === t); return rows.length ? `<div class="mg-label">${t}</div>${rows.map(xRowPlain).join('')}` : ''; }).join('');
-  const extra = (r.meals || []).filter((m) => !m.plan);
-  const exExtra = (r.exercises || []).filter((x) => !x.plan);
-  const xMeals = (r.meals || []).map((m, i) => [m, i]).filter(([m]) => !m.plan).map(([m, i]) => mealRowView(m, `${mealDate}:${i}`)).join('');
-  const xEx = (r.exercises || []).map((e, i) => [e, i]).filter(([e]) => !e.plan).map(([e, i]) => exRowView(e, `${mealDate}:${i}`)).join('');
-  const exExtraHtml = exExtra.length ? `<div class="mg-label">계획 외로 한 운동</div>${xEx}` : '';
-  const bar = weekBar(mealDate, 'data-mealdate', 'openMealCal', (d) => d === mealDate ? dayPlan.meals.length > 0 : !!(cache[d]?.meals || []).length);
-  if (!dayPlan.meals.length && !dayPlan.exercises.length) return `${bar}
-    ${DIET_MODE === 'none' && EX_MODE === 'none' ? `<div class="card"><div class="card-title">${dateLabel(mealDate)} 직접 기록</div><p class="desc">자동 추천을 꺼 두었어요. 먹은 음식과 한 운동을 아래에서 직접 기록해요. (설정에서 언제든 추천을 켤 수 있어요)</p></div>` : `<div class="card"><div class="card-title">${dateLabel(mealDate)} 계획이 없어요</div><p class="desc">추천 플랜을 받으면 이 날 먹을 식단과 운동이 채워져요.</p>
-    <button class="btn" id="genDay">추천 플랜 받기</button></div>`}
-    ${extra.length ? `<div class="card"><div class="card-title">기록한 음식</div>${xMeals}</div>` : ''}
-    ${exExtra.length ? `<div class="card"><div class="card-title">기록한 운동</div>${xEx}</div>` : ''}
-    <div class="card">${activityRow(mealDate)}<button class="link-btn" style="padding:0" data-fooddate="${mealDate}">+ 음식 기록하기</button><button class="link-btn" style="padding:14px 0 0;display:block" data-exdate="${mealDate}">+ 운동 기록하기</button></div>`;
-  return `${bar}
-  <div class="card"><div class="card-title">${dateLabel(mealDate)} 식단<span class="sub">${ate.toLocaleString()} / ${planned.toLocaleString()} kcal</span></div>
-    <p class="desc small">동그라미: 계획대로 먹음 · ✎: 양이 달랐거나 다른 걸 먹었거나 안 먹었을 때</p>${groups}
-    ${xMealsBottom}
-    <button class="link-btn" data-fooddate="${mealDate}">+ 계획에 없던 음식 기록하기</button></div>
-  <div class="card"><div class="card-title">운동<span class="sub">${['일', '월', '화', '수', '목', '금', '토'][new Date(mealDate + 'T00:00:00').getDay()]}요일 루틴</span></div>
-    <p class="desc small">동그라미: 계획대로 함 · ✎: 다른 운동을 했거나 못 했을 때</p>
+  const types = [...MEAL_TYPES, '기타'], groups = types.map(mealGroup).filter(Boolean);
+  const exExtra = (r.exercises || []).map((e, i) => [e, i]).filter(([e]) => !e.plan);
+  const eg = exGroup();
+  const bar = weekBar(mealDate, 'data-mealdate', 'openMealCal', (d) => cache[d] && (cache[d].weight != null || (cache[d].meals || []).length || (cache[d].exercises || []).length));
+  const noPlan = !dayPlan.meals.length && !dayPlan.exercises.length, bothNone = DIET_MODE === 'none' && EX_MODE === 'none';
+  const burn = r.calories_burned ?? calcBurn(r);
+  const head = `<div class="card dayhead"><div class="dh-l"><b>${r.weight != null ? `${Number(r.weight).toFixed(2)}kg` : '체중 –'}</b><span>${dateLabel(mealDate)}${r.steps != null ? ` · ${Number(r.steps).toLocaleString()}걸음` : ''}${burn ? ` · 소모 ${Number(burn).toLocaleString()}kcal` : ''}</span></div>
+    <div class="dh-r"><button type="button" class="ibtn ib-in${r.inbody ? ' has' : ''}" data-ibdate="${mealDate}" aria-label="인바디">IN</button><button type="button" class="ibtn" data-recedit="${mealDate}" aria-label="이 날 기록 편집">${PENCIL}</button></div></div>
+    ${r.inbody ? `<div class="card"><div class="card-title">인바디<span class="ib-tag">측정일</span></div>${ibGrid(r.inbody, ibRecs().filter((x) => x.date < mealDate).pop()?.inbody)}</div>` : ''}`;
+  const gen = noPlan && !bothNone && !READONLY ? `<div class="card"><p class="desc" style="margin:0 0 10px">${dateLabel(mealDate)} 추천 플랜이 아직 없어요.</p><button class="btn" id="genDay">추천 플랜 받기</button></div>` : '';
+  const foodCard = `<div class="card"><div class="ch"><b>식단</b><span class="sub">${ate.toLocaleString()}${planned ? ` / ${planned.toLocaleString()}` : ''} kcal</span><button type="button" class="ibtn plus" data-fooddate="${mealDate}" aria-label="음식 추가">${PLUS}</button></div>
+    ${groups.length ? groups.map(mealRowHtml).join('') : '<div class="empty">아직 기록한 음식이 없어요. 오른쪽 + 로 추가해요</div>'}</div>`;
+  const exCard = `<div class="card"><div class="ch"><b>운동</b><span class="sub">${eg.st ? `${['일', '월', '화', '수', '목', '금', '토'][new Date(mealDate + 'T00:00:00').getDay()]}요일 루틴` : ''}</span><button type="button" class="ibtn plus" data-exdate="${mealDate}" aria-label="운동 추가">${PLUS}</button></div>
     ${activityRow(mealDate)}
-    ${dayPlan.exercises.map((e, i) => checkRow('exercises', i, e)).join('') || '<div class="empty">쉬는 날이에요</div>'}
-    ${exExtraHtml}
-    <button class="link-btn" data-exdate="${mealDate}">+ 계획에 없던 운동 기록하기</button></div>`;
+    ${eg.st ? exRowHtml(eg) : ''}${exExtra.map(([e, i]) => exRowView(e, `${mealDate}:${i}`)).join('')}
+    ${!eg.st && !exExtra.length ? `<div class="empty">${EX_MODE === 'none' ? '아직 기록한 운동이 없어요. 오른쪽 + 로 추가해요' : '쉬는 날이에요'}</div>` : ''}</div>`;
+  return `${bar}${head}${gen}${foodCard}${exCard}`;
 }
 
 // searchable exercise list for the 'add exercise' sheet: name|category|sets|reps|minutes
@@ -1102,8 +1154,8 @@ function browseFoods(cat) {
   if (cat === '최근') return recentFoods();
   return allFoods().filter((f) => f.cat === cat);
 }
-function openFoodSheet(date) {
-  let cur = guessMealType(date);
+function openFoodSheet(date, ftype) {
+  let cur = ftype || guessMealType(date);
   const fmtK = (n) => (Number.isInteger(n) ? n : +n.toFixed(1)).toLocaleString();
   openSheet(`<div class="sheet-head"><h2>${dateLabel(date)} 음식 추가</h2></div>
     <div class="seg scroll" id="mtype">${MEAL_TYPES.map((t) => `<button type="button" data-t="${t}"${t === cur ? ' class="on"' : ''}>${t}</button>`).join('')}</div>
@@ -1269,6 +1321,7 @@ sheet.addEventListener('focusin', (e) => {
 });
 sheet.addEventListener('focusout', () => setTimeout(() => { if (!isField(document.activeElement) || !sheet.contains(document.activeElement)) { sheetTyping = false; syncSheetViewport(); } }, 120));
 function openSheet(html) {
+  detail = null;
   sheet.innerHTML = `<div class="sheet-handle"></div>${html}`;
   sheet.style.transform = '';
   if (sheet.hidden) { lockedY = window.scrollY; document.body.style.top = `-${lockedY}px`; document.body.classList.add('sheet-open'); }
@@ -1277,11 +1330,21 @@ function openSheet(html) {
   syncSheetViewport();
 }
 function closeSheet() {
+  detail = null;
   if (!sheet.hidden) { try { document.activeElement?.blur(); } catch {} document.body.classList.remove('sheet-open'); document.body.style.top = ''; window.scrollTo(0, lockedY); }
   sheet.hidden = bg.hidden = true; sheetTyping = false; sheet.classList.remove('full'); sheet.style.transform = ''; sheet.style.bottom = ''; sheet.style.height = ''; sheet.style.maxHeight = ''; sheet.style.paddingBottom = '';
 }
 bg.onclick = closeSheet;
-sheet.addEventListener('click', (e) => { const fav = e.target.closest('.favmini'); if (fav) favMiniClick(fav); });
+sheet.addEventListener('click', (e) => {
+  const fav = e.target.closest('.favmini'); if (fav) favMiniClick(fav);
+  if (!detail) return;
+  const ck = e.target.closest('[data-check]'); if (ck) { if (READONLY) return; const [kind, i] = ck.dataset.check.split(':'); return togglePlanItem(kind, Number(i)); }
+  const more = e.target.closest('[data-more]'); if (more) { if (READONLY) return; const [kind, i] = more.dataset.more.split(':'); return openStatusSheet(kind, Number(i)); }
+  const sk = e.target.closest('[data-skipmeal]'); if (sk) return setMealSkip(sk.dataset.skipmeal);
+  const sw = e.target.closest('[data-swapmeal]'); if (sw) return openMealSwapSheet(sw.dataset.swapmeal);
+  const fd = e.target.closest('[data-fooddate]'); if (fd) return openFoodSheet(fd.dataset.fooddate, fd.dataset.ftype || undefined);
+  const xd = e.target.closest('[data-exdate]'); if (xd) return openExerciseSheet(xd.dataset.exdate);
+});
 
 // swipe-down-to-close: dragging the handle always works; dragging the content works
 // once it's already scrolled to the top (so it reads as "nothing left to pull").
@@ -2056,9 +2119,13 @@ function render() {
   $('#title').textContent = { home: '오늘', meals: '기록', record: '히스토리', stats: '통계', plan: '계획', settings: '설정' }[tab];
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === tab));
   if (tab === 'record' || tab === 'meals') wireWeekSwipe($('.weekbar'));
+  if (detail && !sheet.hidden) sheet.innerHTML = `<div class="sheet-handle"></div>${detailBody(detail)}`;
 }
 $('#view').addEventListener('click', (e) => {
   const fav = e.target.closest('.favmini'); if (fav) return favMiniClick(fav);
+  const mdn = e.target.closest('[data-mealdone]'); if (mdn) return setMealDone(mdn.dataset.mealdone);
+  const mop = e.target.closest('[data-mealopen]'); if (mop) return openDetail({ kind: 'meal', type: mop.dataset.mealopen });
+  if (e.target.closest('[data-exopen]')) return openDetail({ kind: 'ex' });
   const ck = e.target.closest('[data-check]');
   if (ck && READONLY) return;
   if (ck) { const [kind, i] = ck.dataset.check.split(':'); return togglePlanItem(kind, Number(i)); }
@@ -2069,7 +2136,7 @@ $('#view').addEventListener('click', (e) => {
   const fd = e.target.closest('[data-fooddate]');
   if (fd) return openFoodSheet(fd.dataset.fooddate);
   const ibd = e.target.closest('[data-ibdate]');
-  if (ibd) { if (READONLY && !cache[ibd.dataset.ibdate]?.inbody) return; if (READONLY) { recordDate = ibd.dataset.ibdate; tab = 'record'; return render(); } return openInbodySheet(ibd.dataset.ibdate); }
+  if (ibd) { if (READONLY && !cache[ibd.dataset.ibdate]?.inbody) return; if (READONLY) { tab = 'meals'; return setMealDate(ibd.dataset.ibdate); } return openInbodySheet(ibd.dataset.ibdate); }
   const ibm = e.target.closest('[data-ibmetric]');
   if (ibm) { ibMetric = ibm.dataset.ibmetric; return render(); }
   if (e.target.closest('#heightBtn')) return setHeightSheet();
@@ -2509,16 +2576,15 @@ const TOUR = [
   { tab: 'home', sel: '#quickWeight', tap: true, title: '체중 입력', text: '아침 공복에 체중을 입력해요. 눌러서 입력창을 열어볼까요?' },
   { sheet: true, title: '체중 입력창', text: '체중을 적고 저장하면 오늘 기록에 들어가요. 체중이 쌓이면 감량 속도를 분석해서 식단과 운동을 자동으로 맞춰드려요. (지금은 저장하지 않아도 돼요)' },
   { tab: 'home', sel: TOUR_TAB('meals'), tap: true, title: '기록 탭', text: '오늘 먹을 식단과 할 운동을 체크하고 기록하는 곳이에요. 눌러보세요!' },
-  { tab: 'meals', sel: '.check-row .box', title: '체크하기', text: '계획대로 먹거나 운동했다면 동그라미를 눌러 체크해요. 기록에 자동으로 반영돼요.' },
-  { tab: 'meals', sel: '.check-row .more', title: '다르게 했을 때', text: '오른쪽 연필(✎) 버튼: 양이 달랐거나 다른 걸 먹었거나 안 먹었을 때, 대신 한 운동이 있을 때 눌러요. 계획은 그대로 남아요.' },
-  { tab: 'meals', sel: '[data-fooddate]', tap: true, title: '계획에 없던 음식', text: '간식이나 외식처럼 계획에 없던 음식은 여기서 추가해요. 눌러볼까요?' },
+  { tab: 'meals', sel: '.mrow .mck', title: '한 번에 체크', text: '끼니마다 한 줄이에요. 계획대로 먹었다면 동그라미 한 번으로 그 끼니를 모두 체크해요. 운동도 마찬가지예요.' },
+  { tab: 'meals', sel: '.mrow .more', title: '자세히·다르게 했을 때', text: '연필(✎)을 누르면 그 끼니의 음식을 하나씩 보고, 양이 달랐거나 다른 걸 먹었거나 안 먹은 것을 고칠 수 있어요.' },
+  { tab: 'meals', sel: '.ibtn.plus', tap: true, title: '음식 추가', text: '계획에 없던 간식이나 외식은 + 버튼으로 추가해요. 눌러볼까요?' },
   { sheet: true, title: '음식 추가창', text: '음식 이름을 검색하면 칼로리가 자동으로 채워져요. 0.5배·1.5배로 양도 조절하고, 자주 먹는 음식은 즐겨찾기에서 골라요. (지금은 저장하지 않아도 돼요)' },
-  { tab: 'meals', sel: TOUR_TAB('record'), tap: true, title: '히스토리 탭', text: '날짜별 체중·식단·운동과 인바디를 모아보는 곳이에요. 눌러보세요!' },
-  { tab: 'record', sel: '[data-recedit]', tap: true, title: '기록 입력', text: '체중, 걸음 수, 식사, 운동을 날짜별로 한 번에 입력하는 곳이에요. 「편집」을 눌러보세요!' },
+  { tab: 'meals', sel: '[data-recedit]', tap: true, title: '기록 입력', text: '체중, 걸음 수, 식사, 운동을 날짜별로 한 번에 입력하는 곳이에요. 「편집」을 눌러보세요!' },
   { sheet: true, title: '기록 입력창', text: '이 창에서 그날의 체중·걸음·먹은 것·운동을 한꺼번에 적어요. 날짜를 지난 기록도 같은 방법으로 고칠 수 있어요. (지금은 저장하지 않아도 돼요)' },
-  { tab: 'record', sel: '#openCal', tap: true, title: '날짜 고르기', text: '달력 아이콘을 눌러 원하는 날짜로 바로 이동해요. 눌러보세요!' },
+  { tab: 'meals', sel: '#openMealCal', tap: true, title: '날짜 고르기', text: '달력 아이콘을 눌러 원하는 날짜로 바로 이동해요. 눌러보세요!' },
   { sheet: true, title: '달력', text: '날짜를 누르면 그날 기록으로 이동해요. 인바디를 잰 날은 IN 표시가 붙어 있어요.' },
-  { tab: 'record', sel: TOUR_TAB('stats'), tap: true, title: '통계 탭', text: '체중과 섭취·소모 칼로리 그래프, 인바디 변화를 봐요. 눌러보세요!' },
+  { tab: 'meals', sel: TOUR_TAB('stats'), tap: true, title: '통계 탭', text: '체중과 섭취·소모 칼로리 그래프, 인바디 변화를 봐요. 눌러보세요!' },
   { tab: 'stats', sel: TOUR_TAB('plan'), tap: true, title: '계획 탭', text: '앞으로의 식단·운동 계획과 체중 추이 분석이 있어요. 눌러보세요!' },
   { tab: 'plan', sel: '#planDateBtn', title: '날짜 고르기', text: '계획을 볼 날짜를 골라요. 눌러서 다른 날의 식단과 운동 계획으로 이동할 수 있어요.' },
   { tab: 'plan', sel: '[data-plan="gen"]', title: '추천 플랜으로 채우기', text: '고른 날의 식단과 운동을 추천 플랜으로 새로 채워요. 내 체중과 감량 속도에 맞춰 칼로리가 정해져요. 체크하거나 기록한 항목은 그대로 두고, 나머지만 새 추천으로 바뀌어요.' },
