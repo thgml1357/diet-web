@@ -54,14 +54,15 @@ function localStore() {
 async function supabaseStore() {
   const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
   const sb = createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY);
-  const uid = async () => (await sb.auth.getUser()).data.user.id;
+  let _uid = null; // getUser()는 매번 인증 서버까지 다녀와서 느림 → 세션에서 한 번만 읽어 둠
+  const uid = async () => _uid || (_uid = (await sb.auth.getSession()).data.session?.user?.id || (await sb.auth.getUser()).data.user.id);
   const ok = ({ data, error }) => { if (error) throw new Error(error.message); return data; };
   const plan = (table, field) => ({
     get: async (date) => ok(await sb.from(table).select(field).eq('date', date).maybeSingle())?.[field] || [],
     save: async (date, items) => ok(await sb.from(table).upsert({ user_id: await uid(), date, [field]: items }, { onConflict: 'user_id,date' })),
   });
   return {
-    mode: 'supabase', label: '연결됨', sb,
+    mode: 'supabase', label: '연결됨', sb, uid,
     range: async (from, to) => ok(await sb.from('daily_records').select('*').gte('date', from).lte('date', to).order('date')),
     save: async (rec) => ok(await sb.from('daily_records').upsert({ ...rec, user_id: await uid() }, { onConflict: 'user_id,date' })),
     remove: async (date) => ok(await sb.from('daily_records').delete().eq('date', date)),
@@ -80,7 +81,7 @@ async function supabaseStore() {
 }
 
 // read-only snapshot used by the shared link (scripts/build_share.py)
-const APP_VERSION = '2026-11-26 · 끼니 상세 시트 유지';
+const APP_VERSION = '2026-11-27 · 반응 속도 최적화';
 let READONLY = !!window.DIET_SHARE;
 let shareToken = null;
 const SHARE_PARAM = new URLSearchParams(location.search).get('share');
@@ -98,6 +99,7 @@ function shareStore(D) {
 }
 
 /* ---------------- state ---------------- */
+let USER_ROW = null;
 let store, tab = 'home', month = new Date(today.slice(0, 7) + '-01T00:00:00'), cache = {}, metric = 'weight';
 let planDate = today; // same day as 오늘/식단 tabs by default
 let recordDate = today;
@@ -288,7 +290,7 @@ function exercisesFor(date) {
 // meal types (and the day's workout) that have any such item are kept as they are; only the rest is replaced.
 async function generatePlan(date) {
   const target = kcalTarget(latestWeight());
-  const oldM = await store.meals.get(date), oldE = await store.exercises.get(date);
+  const [oldM, oldE] = await Promise.all([store.meals.get(date), store.exercises.get(date)]);
   const lockedTypes = new Set(oldM.filter((m) => itemStatus(m)).map((m) => m.type));
   const keptM = oldM.filter((m) => lockedTypes.has(m.type));
   let fresh = mealsFor(date, target).filter((m) => !lockedTypes.has(m.type));
@@ -298,9 +300,9 @@ async function generatePlan(date) {
     fresh = fresh.map((m) => ({ ...m, grams: m.grams ? Math.round((m.grams * f) / 5) * 5 : 0, kcal: Math.round(m.kcal * f) }));
   }
   const meals = [...keptM, ...fresh].sort((a, b) => MEAL_TYPES.indexOf(a.type) - MEAL_TYPES.indexOf(b.type));
-  await store.meals.save(date, meals);
-  await store.exercises.save(date, oldE.some((x) => itemStatus(x)) ? oldE : exercisesFor(date));
+  await Promise.all([store.meals.save(date, meals), store.exercises.save(date, oldE.some((x) => itemStatus(x)) ? oldE : exercisesFor(date))]);
 }
+const regenWeek = () => Promise.all(Array.from({ length: 7 }, (_, i) => generatePlan(addDays(today, i)))); // 7일을 한꺼번에(병렬로)
 
 /* plan item status: '' (not yet) | done (as planned) | swap (ate/did something else) | skip.
    The planned name/amount/kcal are never modified; what actually happened lives in `actual`
@@ -324,8 +326,8 @@ async function syncRecordFromPlan(date, plan) {
   const exercises = (r.exercises || []).filter((x) => !x.plan).concat(plan.exercises.map((x) => actualOf(x, 'exercises')).filter(Boolean));
   const sum = meals.reduce((a, m) => a + (m.kcal || 0), 0);
   const rec = { date, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: Math.round(sum) || null, calories_burned: calcBurn({ ...r, exercises }) ?? r.calories_burned ?? null, meals, exercises };
-  await store.save(rec);
   cache[date] = { ...r, ...rec };
+  await store.save(rec);
 }
 /* ---- strength log: weight + how it felt, progressive overload hints ---- */
 const FEELS = [['easy', '쉬웠어요'], ['ok', '적당해요'], ['hard', '힘들었어요']];
@@ -362,23 +364,24 @@ function openLiftSheet(i) {
     closeSheet(); try { await setItemStatus('exercises', i, 'done', null, extra); } catch (e) { alert(authMsg(e)); }
   };
 }
+const inBg = (p) => Promise.resolve(p).catch((e) => alert(authMsg(e))); // 화면은 먼저 바꾸고 저장은 뒤에서
 async function setItemStatus(kind, i, st, actual, extra) {
   const list = dayPlan[kind];
   const { st: _s, actual: _a, done: _d, weight: _w, feel: _f, ...base } = list[i]; // old lift data is dropped and re-added from `extra`
   list[i] = { ...base, ...(st ? { st } : {}), done: st === 'done', ...(st === 'done' && extra ? extra : {}), ...(st === 'swap' && actual ? { actual } : {}) };
-  await store[kind].save(mealDate, list);
-  await syncRecordFromPlan(mealDate, dayPlan);
   if (mealDate === today) todayPlan = dayPlan;
+  const d = mealDate, p = Promise.all([store[kind].save(d, list), syncRecordFromPlan(d, dayPlan)]);
   render();
+  await inBg(p);
 }
 async function setMealSkip(type) {
   const idx = dayPlan.meals.map((m, i) => i).filter((i) => dayPlan.meals[i].type === type);
   const allSkip = idx.every((i) => itemStatus(dayPlan.meals[i]) === 'skip');
   idx.forEach((i) => { const { st, actual, done, ...base } = dayPlan.meals[i]; dayPlan.meals[i] = allSkip ? { ...base, done: false } : { ...base, st: 'skip', done: false }; });
-  await store.meals.save(mealDate, dayPlan.meals);
-  await syncRecordFromPlan(mealDate, dayPlan);
   if (mealDate === today) todayPlan = dayPlan;
+  const p = Promise.all([store.meals.save(mealDate, dayPlan.meals), syncRecordFromPlan(mealDate, dayPlan)]);
   render();
+  await inBg(p);
 }
 async function applyMealSwap(type, added) {
   const r = cache[mealDate] || {};
@@ -664,7 +667,8 @@ function openWaterSheet() {
 async function saveCheckin(patch) {
   const r = cache[today] || {}, checkin = { ...(r.checkin || {}), ...patch };
   const rec = { date: today, weight: r.weight ?? null, steps: r.steps ?? null, calories_consumed: r.calories_consumed ?? null, calories_burned: r.calories_burned ?? null, meals: r.meals || [], exercises: r.exercises || [], checkin };
-  try { await store.save(rec); cache[today] = { ...r, ...rec }; render(); } catch (e) { alert(authMsg(e)); }
+  cache[today] = { ...r, ...rec }; render();
+  try { await store.save(rec); } catch (e) { alert(authMsg(e)); }
 }
 function recentFoods() {
   const m = {};
@@ -839,7 +843,7 @@ function setHeightSheet() {
   $('#hSave').onclick = async () => {
     const h = num($('#hIn').value); if (!h) return;
     try {
-      if (store.mode === 'supabase') { const { data: { user } } = await store.sb.auth.getUser(); const { error } = await store.sb.from('users').update({ height: h }).eq('id', user.id); if (error) throw error; }
+      if (store.mode === 'supabase') { const user = { id: await store.uid() }; const { error } = await store.sb.from('users').update({ height: h }).eq('id', user.id); if (error) throw error; }
       else localStorage.setItem('diet.height', String(h));
       HEIGHT = h; closeSheet(); render();
     } catch (e) { $('#err').textContent = '키 저장 칸이 아직 없어요. Supabase에서 0004_inbody.sql을 먼저 실행해주세요.'; }
@@ -1015,18 +1019,19 @@ async function setMealDone(type) {
     const un = dayPlan.exercises.filter((e) => !itemStatus(e)); const all = dayPlan.exercises.every((e) => itemStatus(e) === 'done');
     if (!un.length && !all) return openDetail({ kind: 'ex' });
     dayPlan.exercises = dayPlan.exercises.map((e) => { const { st, actual, done, ...base } = e; return all ? { ...base, done: false } : itemStatus(e) ? e : { ...base, st: 'done', done: true }; });
-    await store.exercises.save(mealDate, dayPlan.exercises);
+    var pSave = store.exercises.save(mealDate, dayPlan.exercises);
   } else {
     const idx = dayPlan.meals.map((m, i) => i).filter((i) => dayPlan.meals[i].type === type);
     if (!idx.length) return openDetail({ kind: 'meal', type });
     const un = idx.filter((i) => !itemStatus(dayPlan.meals[i])), all = idx.every((i) => itemStatus(dayPlan.meals[i]) === 'done');
     if (!un.length && !all) return openDetail({ kind: 'meal', type });
     idx.forEach((i) => { const { st, actual, done, ...base } = dayPlan.meals[i]; dayPlan.meals[i] = all ? { ...base, done: false } : itemStatus(dayPlan.meals[i]) ? dayPlan.meals[i] : { ...base, st: 'done', done: true }; });
-    await store.meals.save(mealDate, dayPlan.meals);
+    var pSave = store.meals.save(mealDate, dayPlan.meals);
   }
-  await syncRecordFromPlan(mealDate, dayPlan);
   if (mealDate === today) todayPlan = dayPlan;
+  const p = Promise.all([pSave, syncRecordFromPlan(mealDate, dayPlan)]);
   render();
+  await inBg(p);
 }
 function viewMeals() {
   const r = cache[mealDate] || {};
@@ -1297,7 +1302,7 @@ function viewSettings() {
 async function setStartDate(d) {
   START = d;
   if (store.mode === 'supabase') {
-    const { data: { user } } = await store.sb.auth.getUser();
+    const user = { id: await store.uid() };
     await store.sb.from('users').update({ start_date: d }).eq('id', user.id);
   } else {
     localStorage.setItem('diet.startDate', d);
@@ -2139,10 +2144,10 @@ async function loadWeekStats(date) {
   }
   return { aer, aerDone, str, strDone, days };
 }
-async function refreshPlan() { planData = { meals: await store.meals.get(planDate), exercises: await store.exercises.get(planDate) }; weekStats = await loadWeekStats(planDate); render(); }
-async function loadToday() { todayPlan = { meals: await store.meals.get(today), exercises: await store.exercises.get(today) }; if (mealDate === today) dayPlan = todayPlan; }
-async function loadDay() { dayPlan = mealDate === today ? todayPlan : { meals: await store.meals.get(mealDate), exercises: await store.exercises.get(mealDate) }; }
-async function setMealDate(d) { mealDate = d; await loadDay(); render(); }
+async function refreshPlan() { const [meals, exercises, ws] = await Promise.all([store.meals.get(planDate), store.exercises.get(planDate), loadWeekStats(planDate)]); planData = { meals, exercises }; weekStats = ws; render(); }
+async function loadToday() { const [meals, exercises] = await Promise.all([store.meals.get(today), store.exercises.get(today)]); todayPlan = { meals, exercises }; if (mealDate === today) dayPlan = todayPlan; }
+async function loadDay() { if (mealDate === today) { dayPlan = todayPlan; return; } const d = mealDate, [meals, exercises] = await Promise.all([store.meals.get(d), store.exercises.get(d)]); if (d === mealDate) dayPlan = { meals, exercises }; }
+async function setMealDate(d) { mealDate = d; if (d !== today) dayPlan = { meals: [], exercises: [] }; render(); await loadDay(); render(); }
 window.__refresh = () => refresh();
 (function pullToRefresh() {
   const ind = document.createElement('div'); ind.id = 'ptr'; ind.textContent = '↓ 당겨서 새로고침'; document.body.appendChild(ind);
@@ -2163,7 +2168,18 @@ window.__refresh = () => refresh();
     ind.textContent = '완료'; setTimeout(() => { ind.classList.remove('show'); ind.style.transform = ''; busy = false; }, 500);
   }, { passive: true });
 })();
-async function refresh() { await loadAll(); await loadToday(); if (tab === 'plan') { planData = { meals: await store.meals.get(planDate), exercises: await store.exercises.get(planDate) }; weekStats = await loadWeekStats(planDate); } if (tab === 'meals') await loadDay(); render(); }
+let refreshing = null;
+async function refresh() { // 화면은 지금 있는 데이터로 바로 그리고, 서버에서 다시 읽은 뒤 한 번 더 그림
+  render();
+  const job = (async () => {
+    await Promise.all([loadAll(), loadToday()]);
+    if (tab === 'plan') { const [meals, exercises, ws] = await Promise.all([store.meals.get(planDate), store.exercises.get(planDate), loadWeekStats(planDate)]); planData = { meals, exercises }; weekStats = ws; }
+    if (tab === 'meals') await loadDay();
+    render();
+  })();
+  refreshing = job;
+  try { await job; } finally { if (refreshing === job) refreshing = null; }
+}
 function render() {
   const v = $('#view');
   v.innerHTML = { home: viewHome, meals: viewMeals, record: viewRecord, stats: viewStats, plan: viewPlan, settings: viewSettings }[tab]();
@@ -2198,9 +2214,9 @@ $('#view').addEventListener('click', (e) => {
   const fc = e.target.closest('[data-favcat]');
   if (fc) return renderFavoritesView(fc.dataset.favcat);
   const em = e.target.closest('[data-exmode]');
-  if (em) { if (em.dataset.exmode === EX_MODE) return; EX_MODE = em.dataset.exmode; (async () => { await saveProfilePatch({ exercise: EX_MODE }); for (let i = 0; i < 7; i++) await generatePlan(addDays(today, i)); await refresh(); })(); return; }
+  if (em) { if (em.dataset.exmode === EX_MODE) return; EX_MODE = em.dataset.exmode; render(); inBg(Promise.all([saveProfilePatch({ exercise: EX_MODE }), regenWeek()]).then(refresh)); return; }
   const dt = e.target.closest('[data-diet]');
-  if (dt) { if (dt.dataset.diet === DIET_MODE) return; DIET_MODE = dt.dataset.diet; (async () => { await saveProfilePatch({ diet: DIET_MODE }); for (let i = 0; i < 7; i++) await generatePlan(addDays(today, i)); await refresh(); })(); return; }
+  if (dt) { if (dt.dataset.diet === DIET_MODE) return; DIET_MODE = dt.dataset.diet; render(); inBg(Promise.all([saveProfilePatch({ diet: DIET_MODE }), regenWeek()]).then(refresh)); return; }
   const gy = e.target.closest('[data-gym]');
   if (gy) { useGym = gy.dataset.gym === '1'; try { localStorage.setItem('diet.gym', useGym ? '1' : '0'); } catch {} saveProfilePatch({ place: useGym ? 'gym' : 'home' }); return render(); }
   const bk = e.target.closest('[data-back]');
@@ -2248,7 +2264,8 @@ document.addEventListener('change', async (e) => {
 document.querySelector('.tabs').addEventListener('click', async (e) => {
   const b = e.target.closest('button'); if (!b) return;
   tab = b.dataset.tab;
-  if (tab === 'plan') await refreshPlan(); else if (tab === 'meals') { await loadDay(); render(); } else render();
+  render();
+  if (tab === 'plan') await refreshPlan(); else if (tab === 'meals' && mealDate !== today) { await loadDay(); render(); }
 });
 
 // password reset by emailed 6-digit code (needs {{ .Token }} in Supabase's "Reset password" email template)
@@ -2346,11 +2363,11 @@ function applyProfile(p) {
 async function loadProfile() {
   let p = null;
   if (store.mode === 'supabase') {
-    const { data: u } = await store.sb.auth.getUser();
+    const u = { user: { id: await store.uid() } };
     PROFILE_UID = u.user.id;
     try { p = JSON.parse(lsGet(profKey())); } catch {}
-    const { data, error } = await store.sb.from('users').select('profile').eq('id', u.user.id).maybeSingle();
-    if (!error && data?.profile) p = data.profile;
+    if (USER_ROW) { if (USER_ROW.profile) p = USER_ROW.profile; }
+    else { const { data, error } = await store.sb.from('users').select('profile').eq('id', u.user.id).maybeSingle(); if (!error && data?.profile) p = data.profile; }
   } else { try { p = JSON.parse(lsGet(profKey())); } catch {} }
   applyProfile(p);
 }
@@ -2417,7 +2434,7 @@ function showOnboarding(mode) {
 async function saveProfilePatch(patch) {
   PROFILE = { ...(PROFILE || {}), ...patch };
   try { localStorage.setItem(profKey(), JSON.stringify(PROFILE)); } catch {}
-  if (store.mode === 'supabase') { try { const { data: u } = await store.sb.auth.getUser(); await store.sb.from('users').update({ profile: PROFILE }).eq('id', u.user.id); } catch {} }
+  if (store.mode === 'supabase') { try { await store.sb.from('users').update({ profile: PROFILE }).eq('id', await store.uid()); } catch {} }
 }
 function openGoalSheet() {
   openSheet(`<div class="sheet-head"><h2>목표 체중</h2></div><p class="desc small">현재 체중보다 낮게, 키에 맞는 건강한 체중 이상으로 정해요.</p>
@@ -2437,11 +2454,11 @@ async function saveProfileEdit(A) {
   const profile = { ...(PROFILE || {}), goal: g, place: A.place, back: A.back === 'yes', level: A.level, diet: A.diet, exercise: A.ex };
   try { localStorage.setItem(profKey(), JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); } catch {}
   if (store.mode === 'supabase') {
-    const { data: u } = await store.sb.auth.getUser();
+    const u = { user: { id: await store.uid() } };
     const r = await store.sb.from('users').update({ height: h, profile }).eq('id', u.user.id);
     if (r.error) throw new Error(r.error.message);
   }
-  if (changedDiet) { applyProfile(profile); await loadAll(); for (let i = 0; i < 7; i++) await generatePlan(addDays(today, i)); }
+  if (changedDiet) { applyProfile(profile); await loadAll(); await regenWeek(); }
 }
 async function finishOnboarding(A) {
   const h = num(A.h), w = num(A.w), g = num(A.g);
@@ -2450,7 +2467,7 @@ async function finishOnboarding(A) {
   const profile = { goal: g, place: A.place, back: A.back === 'yes', level: A.level, diet: A.diet, exercise: A.ex, program_start: mon.toLocaleDateString('sv'), tour: 'pending' };
   try { localStorage.setItem(profKey(), JSON.stringify(profile)); localStorage.setItem('diet.gym', A.place === 'gym' ? '1' : '0'); localStorage.setItem('diet.height', String(h)); localStorage.setItem('diet.startDate', today); } catch {}
   if (store.mode === 'supabase') {
-    const { data: u } = await store.sb.auth.getUser();
+    const u = { user: { id: await store.uid() } };
     const upd = (o) => store.sb.from('users').update(o).eq('id', u.user.id);
     let r = await upd({ height: h, start_date: today, profile });
     if (r.error) r = await upd({ start_date: today }); // profile/height columns missing → migration 0005 not run yet; keep local copy
@@ -2459,7 +2476,7 @@ async function finishOnboarding(A) {
   applyProfile(profile); HEIGHT = h; START = today;
   await store.save({ date: today, weight: w, meals: [], exercises: [] });
   await loadAll();
-  for (let i = 0; i < 7; i++) await generatePlan(addDays(today, i));
+  await regenWeek();
 }
 
 /* ---------------- exercise guide (tap an exercise to see how-to + video) ----------------
@@ -2744,14 +2761,12 @@ function startTour() {
       const { data } = await store.sb.auth.getSession();
       if (!data.session) return showLogin(store.sb);
       accountLabel = data.session.user.email; MY_UID = data.session.user.id;
-      const { data: urow } = await store.sb.from('users').select('start_date').eq('id', data.session.user.id).maybeSingle();
+      const { data: urow } = await store.sb.from('users').select('*').eq('id', data.session.user.id).maybeSingle(); // 사용자 정보는 한 번에
+      USER_ROW = urow || {};
       if (urow?.start_date) START = urow.start_date;
-      const { data: hrow } = await store.sb.from('users').select('height').eq('id', data.session.user.id).maybeSingle(); // null until 0004 migration
-      if (hrow?.height) HEIGHT = Number(hrow.height);
-      const { data: srow } = await store.sb.from('users').select('share_token').eq('id', data.session.user.id).maybeSingle();
-      shareToken = srow?.share_token || null;
-      const { data: prow } = await store.sb.from('users').select('program_start').eq('id', data.session.user.id).maybeSingle(); // set by earlier web-app versions
-      if (prow?.program_start) PROGRAM_START = prow.program_start;
+      if (urow?.height) HEIGHT = Number(urow.height);
+      shareToken = urow?.share_token || null;
+      if (urow?.program_start) PROGRAM_START = urow.program_start;
     } else {
       store = localStore(); accountLabel = '데모 계정';
       HEIGHT = num(lsGet('diet.height'));
@@ -2759,10 +2774,11 @@ function startTour() {
       if (saved) START = saved;
     }
     $('#modeChip').textContent = store.label;
-    favorites = await store.favorites.get();
-    if (!READONLY) { try { customFoods = await store.foods.list(); } catch {} }
-    if (store.mode === 'supabase') { try { const { data: a } = await store.sb.from('users').select('is_admin').eq('id', MY_UID).maybeSingle(); IS_ADMIN = !!a?.is_admin; if (IS_ADMIN) pendingFoodCount = (await store.foods.pending()).length; } catch {} }
-    if (!READONLY) { await loadProfile(); if (!PROFILE && !(await store.range('2000-01-01', '2100-01-01')).length) return showOnboarding(); }
+    const favP = USER_ROW && store.mode === 'supabase' ? Promise.resolve(USER_ROW.favorites || []) : store.favorites.get();
+    const [favs, foods] = await Promise.all([favP, READONLY ? [] : store.foods.list().catch(() => [])]);
+    favorites = favs; customFoods = foods || [];
+    if (store.mode === 'supabase') { try { IS_ADMIN = !!USER_ROW?.is_admin; if (IS_ADMIN) pendingFoodCount = (await store.foods.pending()).length; } catch {} }
+    if (!READONLY) { await Promise.all([loadProfile(), loadAll()]); if (!PROFILE && !recs().length) return showOnboarding(); }
     await refresh();
     if (!READONLY && PROFILE?.tour === 'pending') setTimeout(startTour, 500);
   } catch (e) { $('#view').innerHTML = `<div class="card"><div class="err">${esc(authMsg(e))}</div></div>`; }
