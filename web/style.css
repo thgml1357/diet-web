@@ -469,3 +469,9 @@ svg.chart .lbl{fill:#191f28;font-size:11px;font-weight:700;paint-order:stroke;st
 svg.chart .goal{stroke:#12b886;stroke-width:1.6;stroke-dasharray:5 4}
 svg.chart .goal-t{fill:#0b8f66;font-size:10.5px;font-weight:700;paint-order:stroke;stroke:#fff;stroke-width:3px}
 .chart-note{margin-top:10px;font-size:13px;color:var(--sub);text-align:center}
+
+/* 눌렀을 때 바로 반응이 보이게 */
+button,a,label{-webkit-tap-highlight-color:transparent}
+.btn,.seg button,.ibtn,.mck,.mbody,.more,.chip,.favchip,.qa-i,.ac-i,.opt,.tabs button{transition:transform .08s ease,opacity .08s ease}
+.btn:active,.seg button:active,.ibtn:active,.more:active,.favchip:active,.opt:active,.tabs button:active{transform:scale(.96);opacity:.85}
+.mbody:active,.mck:active{opacity:.6}
